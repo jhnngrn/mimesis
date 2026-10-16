@@ -103,7 +103,3 @@ Identities follow the format `user@domain`, normalized to lowercase.
 ```go
 user, domain, err := mimesis.ParseIdentity("alice@example.com")
 ```
-
-## License
-
-MIT
