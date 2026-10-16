@@ -795,7 +795,7 @@ func (l *Link) SetModules(modules []string, registered map[string]Module) {
 			continue
 		}
 		if !desired[name] && mod.Status != Connected {
-			delete(l.State.Modules, name)
+			mod.IntentClose = true
 		}
 	}
 }
