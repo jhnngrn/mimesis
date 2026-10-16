@@ -100,6 +100,34 @@ type Module interface {
 }
 ```
 
+### Node
+
+The `*Node` received by the module factory:
+
+- `node.Get(peer) *Link` — get an existing link
+- `node.Connect(peer) (*Link, error)` — create an outgoing link (errors if exists or at capacity)
+- `node.ModuleMap() map[string]Module` — access other module instances
+
+### Link
+
+Methods available on a `*Link`:
+
+- `lk.RefModule(name)` — hold a ref on this module (keeps the link open)
+- `lk.UnrefModule(name)` — release the ref (sets IntentClose when all refs reach 0)
+- `lk.ModuleEnabled(name) bool` — true if module is bilaterally connected
+- `lk.SetModules(modules, registered)` — propose modules on this link
+
+### Account commands (link.*)
+
+Built-in account API commands handled by mimesis directly:
+
+- `link.accept {peer, modules?}` — accept an incoming link
+- `link.reject {peer}` — reject an incoming link
+- `link.set_modules {peer, modules}` — propose modules on a link
+- `link.accept_module {peer, module}` — accept an incoming module proposal
+- `link.reject_module {peer, module}` — reject an incoming module proposal
+- `link.set_invite_mode {mode}` — set invite mode (open/invite/closed)
+
 ### Identity
 
 Identities follow the format `user@domain`, normalized to lowercase.
