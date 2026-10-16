@@ -75,12 +75,11 @@ type ScheduleFunc func(delay time.Duration, fn func() []string)
 // for periodic work, and persisted state (nil if new). App-specific
 // dependencies (e.g. shared data structures between modules) are
 // captured in the closure.
-type ModuleFactory func(nodeID string, links *Node, schedule ScheduleFunc, state json.RawMessage) Module
+type ModuleFactory func(name, nodeID string, node *Node, schedule ScheduleFunc, state json.RawMessage) Module
 
 type moduleReg struct {
-	name      string
-	factory   ModuleFactory
-	protected bool
+	name    string
+	factory ModuleFactory
 }
 
 // ---------------------------------------------------------------------------
@@ -108,9 +107,8 @@ type Server struct {
 }
 
 // Register adds a module factory. Call before Init.
-// If protected is true, the module cannot be removed via SetModules.
-func (s *Server) Register(name string, factory ModuleFactory, protected bool) {
-	s.factories = append(s.factories, moduleReg{name: name, factory: factory, protected: protected})
+func (s *Server) Register(name string, factory ModuleFactory) {
+	s.factories = append(s.factories, moduleReg{name: name, factory: factory})
 }
 
 // Send posts a signed sync message to a peer's domain.
@@ -125,22 +123,12 @@ func (s *Server) Send(peerDomain string, msg txRequest) ([]byte, error) {
 	return body, nil
 }
 
-// ---------------------------------------------------------------------------
-// Node state — persisted per identity
-// ---------------------------------------------------------------------------
-
-type nodeState struct {
-	ID         string                     `json:"id"`
-	Links      map[string]*Link           `json:"links"`
-	InviteMode inviteMode                 `json:"invite_mode,omitempty"`
-	Handlers   map[string]json.RawMessage `json:"handlers,omitempty"`
-}
-
 // newNode creates a Node from persisted state (or nil for new).
 func (s *Server) newNode(id string, raw json.RawMessage) *Node {
-	var st nodeState
+	// Unmarshal persisted state into a temporary Node to extract fields.
+	var loaded Node
 	if raw != nil {
-		if err := json.Unmarshal(raw, &st); err != nil {
+		if err := json.Unmarshal(raw, &loaded); err != nil {
 			log.Fatalf("node %s: corrupt state: %v", id, err)
 		}
 	}
@@ -148,50 +136,34 @@ func (s *Server) newNode(id string, raw json.RawMessage) *Node {
 	var n *Node
 
 	commit := func() {
-		ns := nodeState{ID: id, Links: n.Map(), InviteMode: n.inviteMode}
-		ns.Handlers = make(map[string]json.RawMessage)
+		n.Handlers = make(map[string]json.RawMessage)
 		for name, mod := range n.ModuleMap() {
 			if data, err := json.Marshal(mod); err == nil {
-				ns.Handlers[name] = data
+				n.Handlers[name] = data
 			}
 		}
-		if err := s.store.SaveNode(id, ns); err != nil {
+		if err := s.store.SaveNode(id, n); err != nil {
 			log.Fatalf("node %s: persist failed: %v", id, err)
 		}
+		n.Handlers = nil
 	}
 
 	send := func(peer string, msg txRequest) ([]byte, error) {
 		return s.Send(peerDomain(peer), msg)
 	}
 
-	n = newNode(id, st.Links, st.InviteMode, send, commit)
+	n = newNode(id, loaded.Links, loaded.InviteMode, send, commit)
 
 	schedule := func(delay time.Duration, fn func() []string) {
-		n.Schedule(delay, fn)
+		n.schedule(delay, fn)
 	}
 
 	for _, f := range s.factories {
-		m := f.factory(id, n, schedule, handlerState(raw, f.name))
-		n.RegisterModule(f.name, m)
-		if f.protected {
-			n.Protected[f.name] = struct{}{}
-		}
+		m := f.factory(f.name, id, n, schedule, loaded.Handlers[f.name])
+		n.registerModule(f.name, m)
 	}
 
 	return n
-}
-
-func handlerState(raw json.RawMessage, name string) json.RawMessage {
-	if raw == nil {
-		return nil
-	}
-	var st struct {
-		Handlers map[string]json.RawMessage `json:"handlers"`
-	}
-	if json.Unmarshal(raw, &st) != nil {
-		return nil
-	}
-	return st.Handlers[name]
 }
 
 // NewServer creates a new server with the given configuration.
@@ -242,7 +214,7 @@ func (s *Server) Init() error {
 		s.nodes[user] = s.newNode(id, raw)
 	}
 	for _, n := range s.nodes {
-		n.KickAll()
+		n.kickAll()
 	}
 	if s.cfg.AdminUser != "" && s.cfg.AdminPass != "" {
 		if err := s.bootstrapAdmin(s.cfg.AdminUser, s.cfg.AdminPass); err != nil {
@@ -335,7 +307,7 @@ func (s *Server) handleTx(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if n.QuickReject(env.From, env.Method) {
+	if n.quickReject(env.From, env.Method) {
 		httpError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -345,7 +317,7 @@ func (s *Server) handleTx(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, syncErr := n.HandleIncoming(env)
+	resp, syncErr := n.handleIncoming(env)
 	if syncErr != nil {
 		switch {
 		case errors.Is(syncErr, errNoLink):

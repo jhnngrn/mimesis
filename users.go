@@ -222,7 +222,7 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 		}
 		s.nmu.Lock()
 		if n := s.nodes[p.Username]; n != nil {
-			n.Stop()
+			n.stop()
 		}
 		delete(s.nodes, p.Username)
 		s.nmu.Unlock()

@@ -56,7 +56,7 @@ func main() {
     if err != nil {
         panic(err)
     }
-    srv.Register("myapp", func(nodeID string, links *mimesis.Node, schedule mimesis.ScheduleFunc, state json.RawMessage) mimesis.Module {
+    srv.Register("myapp", func(nodeID string, node *mimesis.Node, schedule mimesis.ScheduleFunc, state json.RawMessage) mimesis.Module {
         return &myModule{}
     }, false)
     mimesis.RunAndWait(srv)

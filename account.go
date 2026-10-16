@@ -21,7 +21,7 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, appErr := n.HandleAccount(req.Method, req.Payload)
+	result, appErr := n.handleAccount(req.Method, req.Payload)
 	if appErr != nil {
 		apiError(w, appErr.Error())
 		return

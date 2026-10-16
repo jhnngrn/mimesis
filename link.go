@@ -131,6 +131,41 @@ type Link struct {
 	Sending        *peerSend     `json:"-"`
 }
 
+// RefModule increments the named module's ref count on this link.
+// If the module goes from 0 to 1 refs, the link-level ref count is also incremented.
+func (l *Link) RefModule(name string) {
+	mod := l.State.Modules[name]
+	if mod == nil {
+		return
+	}
+	if mod.Refs == 0 {
+		l.State.Refs++
+	}
+	mod.Refs++
+}
+
+// UnrefModule decrements the named module's ref count on this link.
+// If the module goes from 1 to 0 refs, the link-level ref count is also decremented.
+func (l *Link) UnrefModule(name string) {
+	mod := l.State.Modules[name]
+	if mod == nil || mod.Refs == 0 {
+		return
+	}
+	mod.Refs--
+	if mod.Refs == 0 && l.State.Refs > 0 {
+		l.State.Refs--
+	}
+}
+
+// UnrefCloseModule decrements the module's refs and sets link IntentClose when
+// all link-level refs reach 0.
+func (l *Link) UnrefCloseModule(name string) {
+	l.UnrefModule(name)
+	if l.State.Refs == 0 {
+		l.State.IntentClose = true
+	}
+}
+
 // ModuleEnabled returns true if the named module is bilaterally active on this link.
 func (l *Link) ModuleEnabled(name string) bool {
 	c := l.State.Modules[name]
@@ -160,47 +195,43 @@ func nowSecs() int64 { return time.Now().Unix() }
 
 // Node manages the set of bilateral links for a node.
 type Node struct {
-	mu         sync.Mutex
-	m          map[string]*Link
-	self       string
-	inviteMode inviteMode
-	Protected  map[string]struct{} // modules that SetModules cannot remove
-	moduleMap  map[string]Module
+	mu         sync.Mutex             `json:"-"`
+	ID         string                 `json:"id"`
+	Links      map[string]*Link       `json:"links"`
+	InviteMode inviteMode             `json:"invite_mode,omitempty"`
+	Handlers   map[string]json.RawMessage `json:"handlers,omitempty"`
+	moduleMap  map[string]Module      `json:"-"`
 	// send delivers a sync message to a peer and returns the response body.
-	send   func(peer string, msg txRequest) ([]byte, error)
+	send   func(peer string, msg txRequest) ([]byte, error) `json:"-"`
 	// commit persists the current state. Called under the mutex.
-	commit func()
-	timers  []*time.Timer
-	stopped bool
+	commit func()        `json:"-"`
+	timers  []*time.Timer `json:"-"`
+	stopped bool          `json:"-"`
 }
 
 // newNode creates a Node for the given identity.
-func newNode(self string, m map[string]*Link, mode inviteMode, send func(string, txRequest) ([]byte, error), commit func()) *Node {
-	if m == nil {
-		m = map[string]*Link{}
+func newNode(id string, links map[string]*Link, mode inviteMode, send func(string, txRequest) ([]byte, error), commit func()) *Node {
+	if links == nil {
+		links = map[string]*Link{}
 	}
 	if mode == "" {
 		mode = inviteModeInvite
 	}
-	return &Node{m: m, self: self, inviteMode: mode, Protected: map[string]struct{}{}, moduleMap: map[string]Module{}, send: send, commit: commit}
+	return &Node{ID: id, Links: links, InviteMode: mode, moduleMap: map[string]Module{}, send: send, commit: commit}
 }
 
-// Self returns the node identity.
-func (n *Node) Self() string { return n.self }
-
 // RegisterModule adds a module to the link collection under the given name.
-func (n *Node) RegisterModule(name string, m Module) {
+func (n *Node) registerModule(name string, m Module) {
 	n.moduleMap[name] = m
 }
 
 // ModuleMap returns the registered modules for serialization.
 func (n *Node) ModuleMap() map[string]Module { return n.moduleMap }
 
-func (n *Node) Get(peer string) *Link { return n.m[peer] }
-func (n *Node) Len() int              { return len(n.m) }
-func (n *Node) Full() bool            { return len(n.m) >= maxLinks }
-func (n *Node) Delete(peer string)    { delete(n.m, peer) }
-func (n *Node) Map() map[string]*Link { return n.m }
+func (n *Node) Get(peer string) *Link { return n.Links[peer] }
+func (n *Node) Len() int              { return len(n.Links) }
+func (n *Node) Full() bool            { return len(n.Links) >= maxLinks }
+func (n *Node) delete(peer string)    { delete(n.Links, peer) }
 
 // Create adds a new link to peer and returns it.
 func (n *Node) Create(peer string) (*Link, error) {
@@ -209,8 +240,8 @@ func (n *Node) Create(peer string) (*Link, error) {
 		return nil, err
 	}
 	peer = strings.ToLower(peer)
-	lk := newLink(n.self, peer)
-	n.m[peer] = lk
+	lk := newLink(n.ID, peer)
+	n.Links[peer] = lk
 	return lk, nil
 }
 
@@ -359,7 +390,7 @@ func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage,
 				l.State.IntentConnect = false
 				return true, nil, nil
 			}
-			if n.inviteMode == inviteModeOpen {
+			if n.InviteMode == inviteModeOpen {
 				l.State.Status = Connected
 				return true, nil, nil
 			}
@@ -368,10 +399,10 @@ func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage,
 			if l.State.Refs > 0 {
 				return false, nil, errRefsHeld
 			}
-			n.Delete(peer)
+			n.delete(peer)
 			return true, nil, nil
 		case "module":
-			ok, err := l.reqModule(payload, n.moduleMap, n.inviteMode)
+			ok, err := l.reqModule(payload, n.moduleMap, n.InviteMode)
 			return ok, nil, err
 		}
 		return false, nil, fmt.Errorf("unknown link method %q", method)
@@ -405,7 +436,7 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 			l.State.IntentConnect = false
 		case "close":
 			if ok {
-				n.Delete(peer)
+				n.delete(peer)
 			} else {
 				l.State.IntentClose = false
 			}
@@ -540,7 +571,7 @@ func (l *Link) respModule(payload json.RawMessage, ok bool) {
 
 // HandleAccount dispatches an account API call by namespace.
 // Handles locking, commit, and kicks internally — like HandleIncoming.
-func (n *Node) HandleAccount(fullMethod string, payload json.RawMessage) (json.RawMessage, error) {
+func (n *Node) handleAccount(fullMethod string, payload json.RawMessage) (json.RawMessage, error) {
 	n.mu.Lock()
 	ns, method := splitMethod(fullMethod)
 
@@ -563,7 +594,7 @@ func (n *Node) HandleAccount(fullMethod string, payload json.RawMessage) (json.R
 			n.mu.Unlock()
 			return nil, fmt.Errorf("invalid mode %q", p.Mode)
 		}
-		n.inviteMode = p.Mode
+		n.InviteMode = p.Mode
 		result = enc("ok")
 
 	case ns == "link" && method == "set_modules":
@@ -581,7 +612,7 @@ func (n *Node) HandleAccount(fullMethod string, payload json.RawMessage) (json.R
 			n.mu.Unlock()
 			return nil, fmt.Errorf("no link to %s", p.Peer)
 		}
-		lk.SetModules(p.Modules, n.moduleMap, n.Protected)
+		lk.SetModules(p.Modules, n.moduleMap)
 		result = enc("ok")
 		kicks = []string{p.Peer}
 
@@ -629,7 +660,7 @@ func (n *Node) HandleAccount(fullMethod string, payload json.RawMessage) (json.R
 		result = enc("ok")
 
 	case ns == "" && method == "status":
-		result = n.Status()
+		result = n.status()
 
 	case ns == "link":
 		n.mu.Unlock()
@@ -651,22 +682,22 @@ func (n *Node) HandleAccount(fullMethod string, payload json.RawMessage) (json.R
 	}
 	n.mu.Unlock()
 	for _, k := range kicks {
-		n.Kick(k)
+		n.kick(k)
 	}
 	return result, err
 }
 
 // Status returns the link collection status as JSON, including module status.
-func (n *Node) Status() json.RawMessage {
+func (n *Node) status() json.RawMessage {
 	links := make(map[string]any)
-	for peer, l := range n.m {
+	for peer, l := range n.Links {
 		links[peer] = map[string]any{
 			"state": l.State,
 		}
 	}
 	result := map[string]any{
 		"links":       links,
-		"invite_mode": n.inviteMode,
+		"invite_mode": n.InviteMode,
 	}
 	for name, mod := range n.moduleMap {
 		if extra := mod.Status(); extra != nil {
@@ -681,8 +712,8 @@ func (n *Node) Status() json.RawMessage {
 
 // SetModules proposes the given modules on this link, filtering by supported.
 // Modules not in the desired set and not yet connected are removed,
-// unless they are in the protected set.
-func (l *Link) SetModules(modules []string, registered map[string]Module, protected map[string]struct{}) {
+// unless they hold refs.
+func (l *Link) SetModules(modules []string, registered map[string]Module) {
 	if l.State.Modules == nil {
 		l.State.Modules = map[string]*ConnectionState{}
 	}
@@ -701,7 +732,7 @@ func (l *Link) SetModules(modules []string, registered map[string]Module, protec
 		}
 	}
 	for name, mod := range l.State.Modules {
-		if _, prot := protected[name]; prot {
+		if mod.Refs > 0 {
 			continue
 		}
 		if !desired[name] && mod.Status != Connected {
@@ -736,7 +767,7 @@ func (l *Link) RejectModule(name string) error {
 
 // QuickReject returns true if this request can be rejected before
 // expensive signature verification (no existing link and not a connect/close).
-func (n *Node) QuickReject(from, method string) bool {
+func (n *Node) quickReject(from, method string) bool {
 	from = strings.ToLower(from)
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -745,7 +776,7 @@ func (n *Node) QuickReject(from, method string) bool {
 
 // HandleIncoming processes an incoming transaction. The caller is responsible
 // for authentication (signature verification).
-func (n *Node) HandleIncoming(env txRequest) (*txResponse, error) {
+func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
 	env.From = strings.ToLower(env.From)
 	n.mu.Lock()
 
@@ -759,7 +790,7 @@ func (n *Node) HandleIncoming(env txRequest) (*txResponse, error) {
 			n.mu.Unlock()
 			return nil, errNoLink
 		}
-		if n.inviteMode == inviteModeClosed {
+		if n.InviteMode == inviteModeClosed {
 			n.mu.Unlock()
 			return nil, errInvitesDisabled
 		}
@@ -788,7 +819,7 @@ func (n *Node) HandleIncoming(env txRequest) (*txResponse, error) {
 		lk.AcceptResponse(env.Resp.Timestamp)
 		n.commit()
 		for _, k := range pbKicks {
-			n.Kick(k)
+			n.kick(k)
 		}
 	}
 
@@ -825,9 +856,9 @@ func (n *Node) HandleIncoming(env txRequest) (*txResponse, error) {
 	resp := lk.AcceptRequest(env.Counter, ok, ts)
 	n.commit()
 	n.mu.Unlock()
-	n.Kick(env.From)
+	n.kick(env.From)
 	for _, k := range kicks {
-		n.Kick(k)
+		n.kick(k)
 	}
 	return resp, nil
 }
@@ -837,18 +868,18 @@ func (n *Node) HandleIncoming(env txRequest) (*txResponse, error) {
 // ---------------------------------------------------------------------------
 
 // Kick triggers a sendPending for the given peer.
-func (n *Node) Kick(peer string) { go n.sendPending(peer) }
+func (n *Node) kick(peer string) { go n.sendPending(peer) }
 
 // KickAll kicks all peers. Used at boot to resume pending work.
-func (n *Node) KickAll() {
+func (n *Node) kickAll() {
 	n.mu.Lock()
 	peers := make([]string, 0, n.Len())
-	for peer := range n.m {
+	for peer := range n.Links {
 		peers = append(peers, peer)
 	}
 	n.mu.Unlock()
 	for _, p := range peers {
-		n.Kick(p)
+		n.kick(p)
 	}
 }
 
@@ -859,7 +890,7 @@ func (n *Node) KickAll() {
 // Schedule is called from two contexts: during init (no mutex held)
 // and from within a callback (mutex held). The timer append is safe
 // in both cases — init has no concurrency, callbacks hold the mutex.
-func (n *Node) Schedule(delay time.Duration, fn func() []string) {
+func (n *Node) schedule(delay time.Duration, fn func() []string) {
 	var t *time.Timer
 	t = time.AfterFunc(delay, func() {
 		n.mu.Lock()
@@ -871,7 +902,7 @@ func (n *Node) Schedule(delay time.Duration, fn func() []string) {
 		n.commit()
 		n.mu.Unlock()
 		for _, k := range kicks {
-			n.Kick(k)
+			n.kick(k)
 		}
 	})
 	// No mutex lock here — called under mutex (callback) or during
@@ -883,14 +914,14 @@ func (n *Node) Schedule(delay time.Duration, fn func() []string) {
 // stopped. After Stop, Schedule callbacks and sendPending are no-ops.
 // Must be called when deleting a node to prevent zombie timers from
 // re-persisting the node's state.
-func (n *Node) Stop() {
+func (n *Node) stop() {
 	n.mu.Lock()
 	n.stopped = true
 	for _, t := range n.timers {
 		t.Stop()
 	}
 	n.timers = nil
-	for _, lk := range n.m {
+	for _, lk := range n.Links {
 		if lk.Sending != nil && lk.Sending.Timer != nil {
 			lk.Sending.Timer.Stop()
 			lk.Sending = nil
@@ -933,7 +964,7 @@ func (n *Node) sendPending(peer string) {
 	lk.Sending = &peerSend{Counter: counter, InFlight: true}
 	msg := lk.Pending
 	env := txRequest{
-		From: n.self, To: peer, Counter: counter,
+		From: n.ID, To: peer, Counter: counter,
 		Method: msg.Method, Payload: msg.Payload,
 	}
 	if lk.Dominant() {
@@ -954,7 +985,7 @@ func (n *Node) sendPending(peer string) {
 
 	n.mu.Lock()
 	if err != nil {
-		log.Printf("[link] %s->%s %s: %v", n.self, peer, msg.Method, err)
+		log.Printf("[link] %s->%s %s: %v", n.ID, peer, msg.Method, err)
 		n.setRetry(peer, counter)
 		n.mu.Unlock()
 		return
@@ -975,7 +1006,7 @@ func (n *Node) sendPending(peer string) {
 	}
 
 	if err := lk.ValidateTimestamp(resp.Timestamp, nowSecs()); err != nil {
-		log.Printf("[link] %s->%s: bad response timestamp: %v", n.self, peer, err)
+		log.Printf("[link] %s->%s: bad response timestamp: %v", n.ID, peer, err)
 		n.setRetry(peer, counter)
 		n.mu.Unlock()
 		return
@@ -993,10 +1024,10 @@ func (n *Node) sendPending(peer string) {
 	lk.Sending = nil
 	n.mu.Unlock()
 	if kickPeer {
-		n.Kick(peer)
+		n.kick(peer)
 	}
 	for _, k := range extraKicks {
-		n.Kick(k)
+		n.kick(k)
 	}
 }
 
