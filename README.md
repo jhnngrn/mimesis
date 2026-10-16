@@ -47,6 +47,9 @@ func (m *myModule) HandleAccount(method string, payload json.RawMessage) (json.R
 func (m *myModule) NextTx(peer string) (string, json.RawMessage, int64) {
     return "", nil, 0
 }
+func (m *myModule) Status() json.RawMessage {
+    return nil
+}
 
 func main() {
     srv, err := mimesis.Boot()
@@ -93,6 +96,7 @@ type Module interface {
     HandleResponse(peer, method string, payload json.RawMessage, ok bool, ts int64) []string
     HandleAccount(method string, payload json.RawMessage) (json.RawMessage, []string, error)
     NextTx(peer string) (string, json.RawMessage, int64)
+    Status() json.RawMessage
 }
 ```
 
