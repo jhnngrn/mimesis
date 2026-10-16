@@ -111,7 +111,7 @@ type QueuedMsg struct {
 // PeerSend tracks the outgoing send lifecycle for a link at a given counter.
 // InFlight means a goroutine is blocked on send. After a failed send,
 // a retry Timer is set that blocks kicks until it fires.
-// Scoped to Counter — if counter advances via HandleSync, the entry
+// Scoped to Counter — if counter advances via HandleIncoming, the entry
 // is stale and ignored.
 type PeerSend struct {
 	Counter  uint64
@@ -125,7 +125,7 @@ type Link struct {
 	Counter        uint64        `json:"counter"`
 	TurnBit        uint64        `json:"turn_bit"`
 	Pending        *QueuedMsg    `json:"pending,omitempty"`
-	CachedResponse *SyncResponse `json:"cached_response,omitempty"`
+	CachedResponse *TxResponse `json:"cached_response,omitempty"`
 	Timestamp      int64         `json:"ts"`
 	Sending        *PeerSend     `json:"-"`
 }
@@ -166,7 +166,7 @@ type Links struct {
 	Protected  map[string]struct{} // modules that SetModules cannot remove
 	moduleMap  map[string]Module
 	// send delivers a sync message to a peer and returns the response body.
-	send   func(peer string, msg SyncRequest) ([]byte, error)
+	send   func(peer string, msg TxRequest) ([]byte, error)
 	// commit persists the current state. Called under the mutex.
 	commit func()
 	timers  []*time.Timer
@@ -174,7 +174,7 @@ type Links struct {
 }
 
 // NewLinks creates a Links collection for the given node identity.
-func NewLinks(self string, m map[string]*Link, mode InviteMode, send func(string, SyncRequest) ([]byte, error), commit func()) *Links {
+func NewLinks(self string, m map[string]*Link, mode InviteMode, send func(string, TxRequest) ([]byte, error), commit func()) *Links {
 	if m == nil {
 		m = map[string]*Link{}
 	}
@@ -219,10 +219,10 @@ func (ls *Links) Create(peer string) (*Link, error) {
 
 // ValidateRequest checks whether an incoming request at the given counter
 // is valid for this link. Returns:
-//   - (*SyncResponse, nil) — stale counter but cached response exists
+//   - (*TxResponse, nil) — stale counter but cached response exists
 //   - (nil, error) — invalid (stale without cache, ahead, or collision)
 //   - (nil, nil) — valid, proceed with dispatch
-func (l *Link) ValidateRequest(counter uint64) (*SyncResponse, error) {
+func (l *Link) ValidateRequest(counter uint64) (*TxResponse, error) {
 	if counter < l.Counter {
 		if l.CachedResponse != nil && l.CachedResponse.Counter == counter {
 			resp := *l.CachedResponse
@@ -254,8 +254,8 @@ func (l *Link) ValidateTimestamp(ts, now int64) error {
 
 // AcceptRequest finalizes an incoming request. Call after the handler
 // has processed the request. Returns the response to send back.
-func (l *Link) AcceptRequest(reqCounter uint64, ok bool, ts int64) *SyncResponse {
-	resp := SyncResponse{Counter: reqCounter, OK: ok, Timestamp: ts}
+func (l *Link) AcceptRequest(reqCounter uint64, ok bool, ts int64) *TxResponse {
+	resp := TxResponse{Counter: reqCounter, OK: ok, Timestamp: ts}
 	l.CachedResponse = &resp
 	l.Counter++
 	l.Timestamp = ts
@@ -276,19 +276,19 @@ func (l *Link) AcceptResponse(ts int64) {
 // Wire envelopes
 // ---------------------------------------------------------------------------
 
-// SyncRequest is the wire envelope for an outgoing sync message.
-type SyncRequest struct {
+// TxRequest is the wire envelope for a peer-to-peer transaction.
+type TxRequest struct {
 	From      string          `json:"from"`
 	To        string          `json:"to"`
 	Counter   uint64          `json:"counter"`
 	Method    string          `json:"method"`
 	Payload   json.RawMessage `json:"payload,omitempty"`
 	Timestamp int64           `json:"timestamp"`
-	Resp      *SyncResponse   `json:"resp,omitempty"`
+	Resp      *TxResponse   `json:"resp,omitempty"`
 }
 
-// SyncResponse is the wire envelope for a sync response.
-type SyncResponse struct {
+// TxResponse is the wire envelope for a transaction response.
+type TxResponse struct {
 	Counter   uint64 `json:"counter"`
 	OK        bool   `json:"ok"`
 	Timestamp int64  `json:"timestamp"`
@@ -538,7 +538,7 @@ func (l *Link) respModule(payload json.RawMessage, ok bool) {
 // ---------------------------------------------------------------------------
 
 // HandleAccount dispatches an account API call by namespace.
-// Handles locking, commit, and kicks internally — like HandleSync.
+// Handles locking, commit, and kicks internally — like HandleIncoming.
 func (ls *Links) HandleAccount(fullMethod string, payload json.RawMessage) (json.RawMessage, error) {
 	ls.mu.Lock()
 	ns, method := splitMethod(fullMethod)
@@ -733,9 +733,9 @@ func (ls *Links) QuickReject(from, method string) bool {
 	return ls.Get(from) == nil && method != "link.connect" && method != "link.close"
 }
 
-// HandleSync processes an incoming sync request. The caller is responsible
+// HandleIncoming processes an incoming transaction. The caller is responsible
 // for authentication (signature verification).
-func (ls *Links) HandleSync(env SyncRequest) (*SyncResponse, error) {
+func (ls *Links) HandleIncoming(env TxRequest) (*TxResponse, error) {
 	env.From = strings.ToLower(env.From)
 	ls.mu.Lock()
 
@@ -743,7 +743,7 @@ func (ls *Links) HandleSync(env SyncRequest) (*SyncResponse, error) {
 	if lk == nil {
 		if env.Method == "link.close" {
 			ls.mu.Unlock()
-			return &SyncResponse{Counter: env.Counter, OK: true, Timestamp: nowSecs()}, nil
+			return &TxResponse{Counter: env.Counter, OK: true, Timestamp: nowSecs()}, nil
 		}
 		if env.Method != "link.connect" {
 			ls.mu.Unlock()
@@ -922,7 +922,7 @@ func (ls *Links) sendPending(peer string) {
 	counter := lk.Counter
 	lk.Sending = &PeerSend{Counter: counter, InFlight: true}
 	msg := lk.Pending
-	env := SyncRequest{
+	env := TxRequest{
 		From: ls.self, To: peer, Counter: counter,
 		Method: msg.Method, Payload: msg.Payload,
 	}
@@ -949,7 +949,7 @@ func (ls *Links) sendPending(peer string) {
 		ls.mu.Unlock()
 		return
 	}
-	var resp SyncResponse
+	var resp TxResponse
 	if json.Unmarshal(body, &resp) != nil {
 		ls.setRetry(peer, counter)
 		ls.mu.Unlock()
