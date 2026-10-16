@@ -114,7 +114,7 @@ func (s *Server) Register(name string, factory ModuleFactory, protected bool) {
 }
 
 // Send posts a signed sync message to a peer's domain.
-func (s *Server) Send(peerDomain string, msg TxRequest) ([]byte, error) {
+func (s *Server) Send(peerDomain string, msg txRequest) ([]byte, error) {
 	status, body, err := s.postSigned(peerDomain, "/p2p/tx", msg)
 	if err != nil {
 		return nil, err
@@ -132,7 +132,7 @@ func (s *Server) Send(peerDomain string, msg TxRequest) ([]byte, error) {
 type nodeState struct {
 	ID         string                     `json:"id"`
 	Links      map[string]*Link           `json:"links"`
-	InviteMode InviteMode                 `json:"invite_mode,omitempty"`
+	InviteMode inviteMode                 `json:"invite_mode,omitempty"`
 	Handlers   map[string]json.RawMessage `json:"handlers,omitempty"`
 }
 
@@ -148,7 +148,7 @@ func (s *Server) newNode(id string, raw json.RawMessage) *Node {
 	var n *Node
 
 	commit := func() {
-		ns := nodeState{ID: id, Links: n.Map(), InviteMode: n.InviteMode}
+		ns := nodeState{ID: id, Links: n.Map(), InviteMode: n.inviteMode}
 		ns.Handlers = make(map[string]json.RawMessage)
 		for name, mod := range n.ModuleMap() {
 			if data, err := json.Marshal(mod); err == nil {
@@ -160,11 +160,11 @@ func (s *Server) newNode(id string, raw json.RawMessage) *Node {
 		}
 	}
 
-	send := func(peer string, msg TxRequest) ([]byte, error) {
-		return s.Send(PeerDomain(peer), msg)
+	send := func(peer string, msg txRequest) ([]byte, error) {
+		return s.Send(peerDomain(peer), msg)
 	}
 
-	n = NewNode(id, st.Links, st.InviteMode, send, commit)
+	n = newNode(id, st.Links, st.InviteMode, send, commit)
 
 	schedule := func(delay time.Duration, fn func() []string) {
 		n.Schedule(delay, fn)
@@ -320,12 +320,12 @@ func (s *Server) handleTx(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	var env TxRequest
+	var env txRequest
 	if json.Unmarshal(body, &env) != nil {
 		httpError(w, http.StatusBadRequest, "malformed")
 		return
 	}
-	if !IdentityInDomain(env.From, sigDomain) {
+	if !identityInDomain(env.From, sigDomain) {
 		httpError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -348,15 +348,15 @@ func (s *Server) handleTx(w http.ResponseWriter, r *http.Request) {
 	resp, syncErr := n.HandleIncoming(env)
 	if syncErr != nil {
 		switch {
-		case errors.Is(syncErr, ErrNoLink):
+		case errors.Is(syncErr, errNoLink):
 			httpError(w, http.StatusNotFound, "no link")
-		case errors.Is(syncErr, ErrInvitesDisabled):
+		case errors.Is(syncErr, errInvitesDisabled):
 			httpError(w, http.StatusForbidden, "invites disabled")
-		case errors.Is(syncErr, ErrMaxLinks):
+		case errors.Is(syncErr, errMaxLinks):
 			httpError(w, http.StatusBadRequest, "max links")
-		case errors.Is(syncErr, ErrStaleCounter), errors.Is(syncErr, ErrCounterAhead), errors.Is(syncErr, ErrCollision):
+		case errors.Is(syncErr, errStaleCounter), errors.Is(syncErr, errCounterAhead), errors.Is(syncErr, errCollision):
 			httpError(w, http.StatusConflict, syncErr.Error())
-		case errors.Is(syncErr, ErrTimestamp):
+		case errors.Is(syncErr, errTimestamp):
 			httpError(w, http.StatusConflict, syncErr.Error())
 		case errors.Is(syncErr, ErrBadMethod):
 			httpError(w, http.StatusBadRequest, syncErr.Error())

@@ -15,8 +15,8 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-// MaxUsers is the maximum number of user accounts per server.
-const MaxUsers = 1000
+// maxUsers is the maximum number of user accounts per server.
+const maxUsers = 1000
 
 type apiRequest struct {
 	Method  string          `json:"method"`
@@ -53,7 +53,7 @@ var errUserExists = errors.New("user already exists")
 
 func (s *Server) createUser(username, password string, admin bool) error {
 	username = strings.ToLower(username)
-	if !ValidUsername(username) {
+	if !validUsername(username) {
 		return fmt.Errorf("invalid username %q", username)
 	}
 	s.umu.Lock()
@@ -61,7 +61,7 @@ func (s *Server) createUser(username, password string, admin bool) error {
 		s.umu.Unlock()
 		return errUserExists
 	}
-	if len(s.users) >= MaxUsers {
+	if len(s.users) >= maxUsers {
 		s.umu.Unlock()
 		return fmt.Errorf("max users reached")
 	}

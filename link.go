@@ -18,23 +18,23 @@ import (
 // ---------------------------------------------------------------------------
 
 var (
-	ErrStaleCounter    = errors.New("stale counter")
-	ErrCounterAhead    = errors.New("counter ahead")
-	ErrCollision       = errors.New("collision")
-	ErrRefsHeld        = errors.New("close with refs > 0")
-	ErrNoLink          = errors.New("no link")
-	ErrMaxLinks        = errors.New("max links")
-	ErrInvitesDisabled = errors.New("invites disabled")
-	ErrTimestamp       = errors.New("timestamp out of range")
+	errStaleCounter    = errors.New("stale counter")
+	errCounterAhead    = errors.New("counter ahead")
+	errCollision       = errors.New("collision")
+	errRefsHeld        = errors.New("close with refs > 0")
+	errNoLink          = errors.New("no link")
+	errMaxLinks        = errors.New("max links")
+	errInvitesDisabled = errors.New("invites disabled")
+	errTimestamp       = errors.New("timestamp out of range")
 	ErrBadMethod       = errors.New("unknown sync method")
 	ErrNotFound        = errors.New("not found")
 )
 
-// MaxTimestampFuture is the maximum number of seconds a peer's
+// maxTimestampFuture is the maximum number of seconds a peer's
 // timestamp may be ahead of our local clock.  Generous to tolerate
 // clock drift; the main defence against exploitation is the backward
 // check (peer timestamp must not go below previously stored value).
-const MaxTimestampFuture int64 = 600 // 10 minutes
+const maxTimestampFuture int64 = 600 // 10 minutes
 
 // ---------------------------------------------------------------------------
 // Link — bilateral sync state
@@ -44,7 +44,7 @@ const MaxTimestampFuture int64 = 600 // 10 minutes
 type ConnectionStatus string
 
 const (
-	Waiting   ConnectionStatus = "waiting"   // proposed, awaiting peer decision
+	waiting   ConnectionStatus = "waiting"   // proposed, awaiting peer decision
 	Incoming  ConnectionStatus = "incoming"  // peer proposed, awaiting local decision
 	Connected ConnectionStatus = "connected" // bilaterally established
 )
@@ -98,23 +98,23 @@ type Module interface {
 	Status() json.RawMessage
 }
 
-// QueuedMsg is a message queued for sending on a link.
+// queuedMsg is a message queued for sending on a link.
 // QueuedAt is a unix-second timestamp of when the message was queued.
 // When multiple modules return a candidate for the same peer, the
 // oldest QueuedAt wins. Zero means unset — unset always loses to any
 // set value; when both are unset (or equal), registration order wins.
-type QueuedMsg struct {
+type queuedMsg struct {
 	Method   string          `json:"method"`
 	Payload  json.RawMessage `json:"payload,omitempty"`
 	QueuedAt int64           `json:"queued_at,omitempty"`
 }
 
-// PeerSend tracks the outgoing send lifecycle for a link at a given counter.
+// peerSend tracks the outgoing send lifecycle for a link at a given counter.
 // InFlight means a goroutine is blocked on send. After a failed send,
 // a retry Timer is set that blocks kicks until it fires.
 // Scoped to Counter — if counter advances via HandleIncoming, the entry
 // is stale and ignored.
-type PeerSend struct {
+type peerSend struct {
 	Counter  uint64
 	InFlight bool
 	Timer    *time.Timer
@@ -125,10 +125,10 @@ type Link struct {
 	State          LinkState     `json:"state"`
 	Counter        uint64        `json:"counter"`
 	TurnBit        uint64        `json:"turn_bit"`
-	Pending        *QueuedMsg    `json:"pending,omitempty"`
-	CachedResponse *TxResponse `json:"cached_response,omitempty"`
+	Pending        *queuedMsg    `json:"pending,omitempty"`
+	CachedResponse *txResponse `json:"cached_response,omitempty"`
 	Timestamp      int64         `json:"ts"`
-	Sending        *PeerSend     `json:"-"`
+	Sending        *peerSend     `json:"-"`
 }
 
 // ModuleEnabled returns true if the named module is bilaterally active on this link.
@@ -140,8 +140,8 @@ func (l *Link) ModuleEnabled(name string) bool {
 // Dominant returns true when this side owns the current counter slot.
 func (l *Link) Dominant() bool { return l.Counter%2 == l.TurnBit }
 
-// NewLink creates a Link with the turn bit derived from identity ordering.
-func NewLink(self, peer string) *Link {
+// newLink creates a Link with the turn bit derived from identity ordering.
+func newLink(self, peer string) *Link {
 	var bit uint64
 	if self > peer {
 		bit = 1
@@ -163,26 +163,26 @@ type Node struct {
 	mu         sync.Mutex
 	m          map[string]*Link
 	self       string
-	InviteMode InviteMode
+	inviteMode inviteMode
 	Protected  map[string]struct{} // modules that SetModules cannot remove
 	moduleMap  map[string]Module
 	// send delivers a sync message to a peer and returns the response body.
-	send   func(peer string, msg TxRequest) ([]byte, error)
+	send   func(peer string, msg txRequest) ([]byte, error)
 	// commit persists the current state. Called under the mutex.
 	commit func()
 	timers  []*time.Timer
 	stopped bool
 }
 
-// NewNode creates a Node for the given identity.
-func NewNode(self string, m map[string]*Link, mode InviteMode, send func(string, TxRequest) ([]byte, error), commit func()) *Node {
+// newNode creates a Node for the given identity.
+func newNode(self string, m map[string]*Link, mode inviteMode, send func(string, txRequest) ([]byte, error), commit func()) *Node {
 	if m == nil {
 		m = map[string]*Link{}
 	}
 	if mode == "" {
-		mode = InviteModeInvite
+		mode = inviteModeInvite
 	}
-	return &Node{m: m, self: self, InviteMode: mode, Protected: map[string]struct{}{}, moduleMap: map[string]Module{}, send: send, commit: commit}
+	return &Node{m: m, self: self, inviteMode: mode, Protected: map[string]struct{}{}, moduleMap: map[string]Module{}, send: send, commit: commit}
 }
 
 // Self returns the node identity.
@@ -198,7 +198,7 @@ func (n *Node) ModuleMap() map[string]Module { return n.moduleMap }
 
 func (n *Node) Get(peer string) *Link { return n.m[peer] }
 func (n *Node) Len() int              { return len(n.m) }
-func (n *Node) Full() bool            { return len(n.m) >= MaxLinks }
+func (n *Node) Full() bool            { return len(n.m) >= maxLinks }
 func (n *Node) Delete(peer string)    { delete(n.m, peer) }
 func (n *Node) Map() map[string]*Link { return n.m }
 
@@ -209,7 +209,7 @@ func (n *Node) Create(peer string) (*Link, error) {
 		return nil, err
 	}
 	peer = strings.ToLower(peer)
-	lk := NewLink(n.self, peer)
+	lk := newLink(n.self, peer)
 	n.m[peer] = lk
 	return lk, nil
 }
@@ -220,43 +220,43 @@ func (n *Node) Create(peer string) (*Link, error) {
 
 // ValidateRequest checks whether an incoming request at the given counter
 // is valid for this link. Returns:
-//   - (*TxResponse, nil) — stale counter but cached response exists
+//   - (*txResponse, nil) — stale counter but cached response exists
 //   - (nil, error) — invalid (stale without cache, ahead, or collision)
 //   - (nil, nil) — valid, proceed with dispatch
-func (l *Link) ValidateRequest(counter uint64) (*TxResponse, error) {
+func (l *Link) ValidateRequest(counter uint64) (*txResponse, error) {
 	if counter < l.Counter {
 		if l.CachedResponse != nil && l.CachedResponse.Counter == counter {
 			resp := *l.CachedResponse
 			return &resp, nil
 		}
-		return nil, ErrStaleCounter
+		return nil, errStaleCounter
 	}
 	if counter > l.Counter {
-		return nil, ErrCounterAhead
+		return nil, errCounterAhead
 	}
 	if l.Pending != nil && l.Dominant() {
-		return nil, ErrCollision
+		return nil, errCollision
 	}
 	return nil, nil
 }
 
 // ValidateTimestamp checks that ts is within acceptable bounds:
 //   - not before the link's latest timestamp (monotonicity)
-//   - not more than MaxTimestampFuture seconds ahead of now
+//   - not more than maxTimestampFuture seconds ahead of now
 func (l *Link) ValidateTimestamp(ts, now int64) error {
 	if ts < l.Timestamp {
-		return ErrTimestamp
+		return errTimestamp
 	}
-	if ts > now+MaxTimestampFuture {
-		return ErrTimestamp
+	if ts > now+maxTimestampFuture {
+		return errTimestamp
 	}
 	return nil
 }
 
 // AcceptRequest finalizes an incoming request. Call after the handler
 // has processed the request. Returns the response to send back.
-func (l *Link) AcceptRequest(reqCounter uint64, ok bool, ts int64) *TxResponse {
-	resp := TxResponse{Counter: reqCounter, OK: ok, Timestamp: ts}
+func (l *Link) AcceptRequest(reqCounter uint64, ok bool, ts int64) *txResponse {
+	resp := txResponse{Counter: reqCounter, OK: ok, Timestamp: ts}
 	l.CachedResponse = &resp
 	l.Counter++
 	l.Timestamp = ts
@@ -277,37 +277,37 @@ func (l *Link) AcceptResponse(ts int64) {
 // Wire envelopes
 // ---------------------------------------------------------------------------
 
-// TxRequest is the wire envelope for a peer-to-peer transaction.
-type TxRequest struct {
+// txRequest is the wire envelope for a peer-to-peer transaction.
+type txRequest struct {
 	From      string          `json:"from"`
 	To        string          `json:"to"`
 	Counter   uint64          `json:"counter"`
 	Method    string          `json:"method"`
 	Payload   json.RawMessage `json:"payload,omitempty"`
 	Timestamp int64           `json:"timestamp"`
-	Resp      *TxResponse   `json:"resp,omitempty"`
+	Resp      *txResponse   `json:"resp,omitempty"`
 }
 
-// TxResponse is the wire envelope for a transaction response.
-type TxResponse struct {
+// txResponse is the wire envelope for a transaction response.
+type txResponse struct {
 	Counter   uint64 `json:"counter"`
 	OK        bool   `json:"ok"`
 	Timestamp int64  `json:"timestamp"`
 }
 
 // ---------------------------------------------------------------------------
-// InviteMode — node-level policy for incoming connections/modules
+// inviteMode — node-level policy for incoming connections/modules
 // ---------------------------------------------------------------------------
 
-type InviteMode string
+type inviteMode string
 
 const (
-	InviteModeClosed InviteMode = "closed" // reject all incoming
-	InviteModeInvite InviteMode = "invite" // incoming, manual accept
-	InviteModeOpen   InviteMode = "open"   // auto-accept all
+	inviteModeClosed inviteMode = "closed" // reject all incoming
+	inviteModeInvite inviteMode = "invite" // incoming, manual accept
+	inviteModeOpen   inviteMode = "open"   // auto-accept all
 )
 
-const MaxLinks = 64
+const maxLinks = 64
 
 func enc(v any) json.RawMessage { d, _ := json.Marshal(v); return d }
 
@@ -318,11 +318,11 @@ func splitMethod(method string) (ns, name string) {
 	return "", method
 }
 
-// OlderQueuedMsg reports whether a should win over b.
+// olderQueuedMsg reports whether a should win over b.
 // Zero QueuedAt means unset — unset loses to any set value.
 // Equal values (including both zero) return false, preserving
 // the earlier candidate.
-func OlderQueuedMsg(a, b *QueuedMsg) bool {
+func olderQueuedMsg(a, b *queuedMsg) bool {
 	if b == nil {
 		return true
 	}
@@ -354,24 +354,24 @@ func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage,
 		}
 		switch method {
 		case "connect":
-			if l.State.IntentConnect || l.State.Status == Waiting {
+			if l.State.IntentConnect || l.State.Status == waiting {
 				l.State.Status = Connected
 				l.State.IntentConnect = false
 				return true, nil, nil
 			}
-			if n.InviteMode == InviteModeOpen {
+			if n.inviteMode == inviteModeOpen {
 				l.State.Status = Connected
 				return true, nil, nil
 			}
 			return false, nil, nil
 		case "close":
 			if l.State.Refs > 0 {
-				return false, nil, ErrRefsHeld
+				return false, nil, errRefsHeld
 			}
 			n.Delete(peer)
 			return true, nil, nil
 		case "module":
-			ok, err := l.reqModule(payload, n.moduleMap, n.InviteMode)
+			ok, err := l.reqModule(payload, n.moduleMap, n.inviteMode)
 			return ok, nil, err
 		}
 		return false, nil, fmt.Errorf("unknown link method %q", method)
@@ -400,7 +400,7 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 			if ok {
 				l.State.Status = Connected
 			} else {
-				l.State.Status = Waiting
+				l.State.Status = waiting
 			}
 			l.State.IntentConnect = false
 		case "close":
@@ -424,22 +424,22 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 // nextTx returns the next message to send on a peer link.
 // Link-level messages (connect/close/module) have absolute priority.
 // Among registered modules, the oldest QueuedAt wins.
-func (n *Node) nextTx(peer string) *QueuedMsg {
+func (n *Node) nextTx(peer string) *queuedMsg {
 	// Link-level messages have absolute priority.
 	lk := n.Get(peer)
 	if lk == nil {
 		return nil
 	}
 	if lk.State.IntentClose && lk.State.Refs == 0 {
-		return &QueuedMsg{Method: "link.close"}
+		return &queuedMsg{Method: "link.close"}
 	}
 	if lk.State.IntentConnect {
-		return &QueuedMsg{Method: "link.connect"}
+		return &queuedMsg{Method: "link.connect"}
 	}
 	if lk.State.Status == Connected {
 		for name, mod := range lk.State.Modules {
 			if mod.IntentConnect {
-				return &QueuedMsg{
+				return &queuedMsg{
 					Method:  "link.module",
 					Payload: enc(map[string]string{"name": name}),
 				}
@@ -449,19 +449,19 @@ func (n *Node) nextTx(peer string) *QueuedMsg {
 	if lk.State.Status != Connected {
 		return nil
 	}
-	var best *QueuedMsg
+	var best *queuedMsg
 	for name, mod := range n.moduleMap {
 		if !lk.ModuleEnabled(name) {
 			continue
 		}
 		method, payload, queuedAt := mod.NextTx(peer)
 		if method != "" {
-			msg := &QueuedMsg{
+			msg := &queuedMsg{
 				Method:   name + "." + method,
 				Payload:  payload,
 				QueuedAt: queuedAt,
 			}
-			if OlderQueuedMsg(msg, best) {
+			if olderQueuedMsg(msg, best) {
 				best = msg
 			}
 		}
@@ -473,7 +473,7 @@ func (n *Node) nextTx(peer string) *QueuedMsg {
 // Module negotiation (internal)
 // ---------------------------------------------------------------------------
 
-func (l *Link) reqModule(payload json.RawMessage, modules map[string]Module, inviteMode InviteMode) (bool, error) {
+func (l *Link) reqModule(payload json.RawMessage, modules map[string]Module, inviteMode inviteMode) (bool, error) {
 	var p struct {
 		Name string `json:"name"`
 	}
@@ -492,13 +492,13 @@ func (l *Link) reqModule(payload json.RawMessage, modules map[string]Module, inv
 		return true, nil
 	}
 	// Mutual — we also want this module.
-	if mod != nil && (mod.IntentConnect || mod.Status == Waiting) {
+	if mod != nil && (mod.IntentConnect || mod.Status == waiting) {
 		mod.Status = Connected
 		mod.IntentConnect = false
 		return true, nil
 	}
 	// Open mode — auto-accept supported modules.
-	if inviteMode == InviteModeOpen {
+	if inviteMode == inviteModeOpen {
 		if mod == nil {
 			mod = &ConnectionState{}
 			l.State.Modules[p.Name] = mod
@@ -529,7 +529,7 @@ func (l *Link) respModule(payload json.RawMessage, ok bool) {
 	if ok {
 		mod.Status = Connected
 	} else {
-		mod.Status = Waiting
+		mod.Status = waiting
 	}
 	mod.IntentConnect = false
 }
@@ -551,19 +551,19 @@ func (n *Node) HandleAccount(fullMethod string, payload json.RawMessage) (json.R
 	switch {
 	case ns == "link" && method == "set_invite_mode":
 		var p struct {
-			Mode InviteMode `json:"mode"`
+			Mode inviteMode `json:"mode"`
 		}
 		if err = json.Unmarshal(payload, &p); err != nil {
 			n.mu.Unlock()
 			return nil, fmt.Errorf("bad request")
 		}
 		switch p.Mode {
-		case InviteModeClosed, InviteModeInvite, InviteModeOpen:
+		case inviteModeClosed, inviteModeInvite, inviteModeOpen:
 		default:
 			n.mu.Unlock()
 			return nil, fmt.Errorf("invalid mode %q", p.Mode)
 		}
-		n.InviteMode = p.Mode
+		n.inviteMode = p.Mode
 		result = enc("ok")
 
 	case ns == "link" && method == "set_modules":
@@ -666,7 +666,7 @@ func (n *Node) Status() json.RawMessage {
 	}
 	result := map[string]any{
 		"links":       links,
-		"invite_mode": n.InviteMode,
+		"invite_mode": n.inviteMode,
 	}
 	for name, mod := range n.moduleMap {
 		if extra := mod.Status(); extra != nil {
@@ -745,7 +745,7 @@ func (n *Node) QuickReject(from, method string) bool {
 
 // HandleIncoming processes an incoming transaction. The caller is responsible
 // for authentication (signature verification).
-func (n *Node) HandleIncoming(env TxRequest) (*TxResponse, error) {
+func (n *Node) HandleIncoming(env txRequest) (*txResponse, error) {
 	env.From = strings.ToLower(env.From)
 	n.mu.Lock()
 
@@ -753,19 +753,19 @@ func (n *Node) HandleIncoming(env TxRequest) (*TxResponse, error) {
 	if lk == nil {
 		if env.Method == "link.close" {
 			n.mu.Unlock()
-			return &TxResponse{Counter: env.Counter, OK: true, Timestamp: nowSecs()}, nil
+			return &txResponse{Counter: env.Counter, OK: true, Timestamp: nowSecs()}, nil
 		}
 		if env.Method != "link.connect" {
 			n.mu.Unlock()
-			return nil, ErrNoLink
+			return nil, errNoLink
 		}
-		if n.InviteMode == InviteModeClosed {
+		if n.inviteMode == inviteModeClosed {
 			n.mu.Unlock()
-			return nil, ErrInvitesDisabled
+			return nil, errInvitesDisabled
 		}
 		if n.Full() {
 			n.mu.Unlock()
-			return nil, ErrMaxLinks
+			return nil, errMaxLinks
 		}
 		var err error
 		lk, err = n.Create(env.From)
@@ -930,9 +930,9 @@ func (n *Node) sendPending(peer string) {
 		promoted = true
 	}
 	counter := lk.Counter
-	lk.Sending = &PeerSend{Counter: counter, InFlight: true}
+	lk.Sending = &peerSend{Counter: counter, InFlight: true}
 	msg := lk.Pending
-	env := TxRequest{
+	env := txRequest{
 		From: n.self, To: peer, Counter: counter,
 		Method: msg.Method, Payload: msg.Payload,
 	}
@@ -959,7 +959,7 @@ func (n *Node) sendPending(peer string) {
 		n.mu.Unlock()
 		return
 	}
-	var resp TxResponse
+	var resp txResponse
 	if json.Unmarshal(body, &resp) != nil {
 		n.setRetry(peer, counter)
 		n.mu.Unlock()
@@ -1012,7 +1012,7 @@ func (n *Node) setRetry(peer string, counter uint64) {
 	if lk.Sending != nil && lk.Sending.Timer != nil {
 		lk.Sending.Timer.Stop()
 	}
-	ps := &PeerSend{
+	ps := &peerSend{
 		Counter:    counter,
 	}
 	ps.Timer = time.AfterFunc(retryDelay, func() {
