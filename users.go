@@ -77,7 +77,7 @@ func (s *Server) createUser(username, password string, admin bool) error {
 		return nil
 	}
 	nodeID := username + "@" + s.cfg.Domain
-	ls := s.newLinks(nodeID, nil)
+	ls := s.newNode(nodeID, nil)
 	s.nmu.Lock()
 	s.nodes[username] = ls
 	s.nmu.Unlock()

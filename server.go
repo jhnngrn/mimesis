@@ -71,11 +71,11 @@ func (c *Config) fill() error {
 type ScheduleFunc func(delay time.Duration, fn func() []string)
 
 // ModuleFactory creates a module for a newly loaded or created node.
-// The factory receives the node identity, the owning Links, a scheduler
+// The factory receives the node identity, the owning Node, a scheduler
 // for periodic work, and persisted state (nil if new). App-specific
 // dependencies (e.g. shared data structures between modules) are
 // captured in the closure.
-type ModuleFactory func(nodeID string, links *Links, schedule ScheduleFunc, state json.RawMessage) Module
+type ModuleFactory func(nodeID string, links *Node, schedule ScheduleFunc, state json.RawMessage) Module
 
 type moduleReg struct {
 	name      string
@@ -87,7 +87,7 @@ type moduleReg struct {
 // Server
 // ---------------------------------------------------------------------------
 
-// Server is a multi-tenant p2p server that hosts Links nodes.
+// Server is a multi-tenant p2p server that hosts nodes.
 type Server struct {
 	cfg       Config
 	store     Store
@@ -97,7 +97,7 @@ type Server struct {
 	factories []moduleReg
 
 	nmu   sync.RWMutex
-	nodes map[string]*Links
+	nodes map[string]*Node
 
 	umu      sync.Mutex
 	users    map[string]*UserRecord
@@ -136,8 +136,8 @@ type nodeState struct {
 	Handlers   map[string]json.RawMessage `json:"handlers,omitempty"`
 }
 
-// NewLinks creates a Links from persisted state (or nil for new).
-func (s *Server) newLinks(id string, raw json.RawMessage) *Links {
+// newNode creates a Node from persisted state (or nil for new).
+func (s *Server) newNode(id string, raw json.RawMessage) *Node {
 	var st nodeState
 	if raw != nil {
 		if err := json.Unmarshal(raw, &st); err != nil {
@@ -145,7 +145,7 @@ func (s *Server) newLinks(id string, raw json.RawMessage) *Links {
 		}
 	}
 
-	var ls *Links
+	var ls *Node
 
 	commit := func() {
 		ns := nodeState{ID: id, Links: ls.Map(), InviteMode: ls.InviteMode}
@@ -164,7 +164,7 @@ func (s *Server) newLinks(id string, raw json.RawMessage) *Links {
 		return s.Send(PeerDomain(peer), msg)
 	}
 
-	ls = NewLinks(id, st.Links, st.InviteMode, send, commit)
+	ls = NewNode(id, st.Links, st.InviteMode, send, commit)
 
 	schedule := func(delay time.Duration, fn func() []string) {
 		ls.Schedule(delay, fn)
@@ -217,7 +217,7 @@ func NewServer(cfg Config) (*Server, error) {
 	return &Server{
 		cfg: cfg, store: store, key: key,
 		client:   &http.Client{Timeout: cfg.HTTPTimeout},
-		nodes:    map[string]*Links{},
+		nodes:    map[string]*Node{},
 		users:    users,
 		sessions: map[string]*session{},
 		keyCache: map[string]cachedKey{},
@@ -239,7 +239,7 @@ func (s *Server) Init() error {
 		if err != nil || domain != s.cfg.Domain {
 			continue
 		}
-		s.nodes[user] = s.newLinks(id, raw)
+		s.nodes[user] = s.newNode(id, raw)
 	}
 	for _, ls := range s.nodes {
 		ls.KickAll()
@@ -296,18 +296,18 @@ func (s *Server) logf(format string, args ...any) {
 	}
 }
 
-func (s *Server) getLinks(user string) *Links {
+func (s *Server) getNode(user string) *Node {
 	s.nmu.RLock()
 	defer s.nmu.RUnlock()
 	return s.nodes[user]
 }
 
-func (s *Server) linksByIdentity(id string) *Links {
+func (s *Server) nodeByIdentity(id string) *Node {
 	user, domain, err := ParseIdentity(id)
 	if err != nil || domain != s.cfg.Domain {
 		return nil
 	}
-	return s.getLinks(user)
+	return s.getNode(user)
 }
 
 // ---------------------------------------------------------------------------
@@ -329,7 +329,7 @@ func (s *Server) handleTx(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	ls := s.linksByIdentity(env.To)
+	ls := s.nodeByIdentity(env.To)
 	if ls == nil {
 		httpError(w, http.StatusUnauthorized, "unauthorized")
 		return

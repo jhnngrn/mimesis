@@ -15,7 +15,7 @@ func (s *Server) handleAccount(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ls := s.getLinks(sess.user)
+	ls := s.getNode(sess.user)
 	if ls == nil {
 		httpError(w, http.StatusInternalServerError, "no node")
 		return

@@ -150,7 +150,7 @@ func NewLink(self, peer string) *Link {
 }
 
 // ---------------------------------------------------------------------------
-// Links — collection of links for a node, including the sync loop
+// Node — collection of links for a node, including the sync loop
 // ---------------------------------------------------------------------------
 
 const retryDelay = 60 * time.Second
@@ -158,8 +158,8 @@ const retryDelay = 60 * time.Second
 // nowSecs returns the current time as unix seconds.
 func nowSecs() int64 { return time.Now().Unix() }
 
-// Links manages the set of bilateral links for a node.
-type Links struct {
+// Node manages the set of bilateral links for a node.
+type Node struct {
 	mu         sync.Mutex
 	m          map[string]*Link
 	self       string
@@ -174,36 +174,36 @@ type Links struct {
 	stopped bool
 }
 
-// NewLinks creates a Links collection for the given node identity.
-func NewLinks(self string, m map[string]*Link, mode InviteMode, send func(string, TxRequest) ([]byte, error), commit func()) *Links {
+// NewNode creates a Node for the given identity.
+func NewNode(self string, m map[string]*Link, mode InviteMode, send func(string, TxRequest) ([]byte, error), commit func()) *Node {
 	if m == nil {
 		m = map[string]*Link{}
 	}
 	if mode == "" {
 		mode = InviteModeInvite
 	}
-	return &Links{m: m, self: self, InviteMode: mode, Protected: map[string]struct{}{}, moduleMap: map[string]Module{}, send: send, commit: commit}
+	return &Node{m: m, self: self, InviteMode: mode, Protected: map[string]struct{}{}, moduleMap: map[string]Module{}, send: send, commit: commit}
 }
 
 // Self returns the node identity.
-func (ls *Links) Self() string { return ls.self }
+func (ls *Node) Self() string { return ls.self }
 
 // RegisterModule adds a module to the link collection under the given name.
-func (ls *Links) RegisterModule(name string, m Module) {
+func (ls *Node) RegisterModule(name string, m Module) {
 	ls.moduleMap[name] = m
 }
 
 // ModuleMap returns the registered modules for serialization.
-func (ls *Links) ModuleMap() map[string]Module { return ls.moduleMap }
+func (ls *Node) ModuleMap() map[string]Module { return ls.moduleMap }
 
-func (ls *Links) Get(peer string) *Link { return ls.m[peer] }
-func (ls *Links) Len() int              { return len(ls.m) }
-func (ls *Links) Full() bool            { return len(ls.m) >= MaxLinks }
-func (ls *Links) Delete(peer string)    { delete(ls.m, peer) }
-func (ls *Links) Map() map[string]*Link { return ls.m }
+func (ls *Node) Get(peer string) *Link { return ls.m[peer] }
+func (ls *Node) Len() int              { return len(ls.m) }
+func (ls *Node) Full() bool            { return len(ls.m) >= MaxLinks }
+func (ls *Node) Delete(peer string)    { delete(ls.m, peer) }
+func (ls *Node) Map() map[string]*Link { return ls.m }
 
 // Create adds a new link to peer and returns it.
-func (ls *Links) Create(peer string) (*Link, error) {
+func (ls *Node) Create(peer string) (*Link, error) {
 	_, _, err := ParseIdentity(peer)
 	if err != nil {
 		return nil, err
@@ -345,7 +345,7 @@ func OlderQueuedMsg(a, b *QueuedMsg) bool {
 // dispatchRequest dispatches an incoming sync request by namespace.
 // Link-level methods are handled inline; registered modules are
 // dispatched by name. Returns (ok, kicks, error).
-func (ls *Links) dispatchRequest(peer, fullMethod string, payload json.RawMessage, ts int64) (bool, []string, error) {
+func (ls *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage, ts int64) (bool, []string, error) {
 	ns, method := splitMethod(fullMethod)
 	if ns == "link" {
 		l := ls.Get(peer)
@@ -388,7 +388,7 @@ func (ls *Links) dispatchRequest(peer, fullMethod string, payload json.RawMessag
 }
 
 // dispatchResponse dispatches a sync response by namespace.
-func (ls *Links) dispatchResponse(peer, fullMethod string, payload json.RawMessage, ok bool, ts int64) []string {
+func (ls *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage, ok bool, ts int64) []string {
 	ns, method := splitMethod(fullMethod)
 	if ns == "link" {
 		l := ls.Get(peer)
@@ -424,7 +424,7 @@ func (ls *Links) dispatchResponse(peer, fullMethod string, payload json.RawMessa
 // nextTx returns the next message to send on a peer link.
 // Link-level messages (connect/close/module) have absolute priority.
 // Among registered modules, the oldest QueuedAt wins.
-func (ls *Links) nextTx(peer string) *QueuedMsg {
+func (ls *Node) nextTx(peer string) *QueuedMsg {
 	// Link-level messages have absolute priority.
 	lk := ls.Get(peer)
 	if lk == nil {
@@ -540,7 +540,7 @@ func (l *Link) respModule(payload json.RawMessage, ok bool) {
 
 // HandleAccount dispatches an account API call by namespace.
 // Handles locking, commit, and kicks internally — like HandleIncoming.
-func (ls *Links) HandleAccount(fullMethod string, payload json.RawMessage) (json.RawMessage, error) {
+func (ls *Node) HandleAccount(fullMethod string, payload json.RawMessage) (json.RawMessage, error) {
 	ls.mu.Lock()
 	ns, method := splitMethod(fullMethod)
 
@@ -657,7 +657,7 @@ func (ls *Links) HandleAccount(fullMethod string, payload json.RawMessage) (json
 }
 
 // Status returns the link collection status as JSON, including module status.
-func (ls *Links) Status() json.RawMessage {
+func (ls *Node) Status() json.RawMessage {
 	links := make(map[string]any)
 	for peer, l := range ls.m {
 		links[peer] = map[string]any{
@@ -736,7 +736,7 @@ func (l *Link) RejectModule(name string) error {
 
 // QuickReject returns true if this request can be rejected before
 // expensive signature verification (no existing link and not a connect/close).
-func (ls *Links) QuickReject(from, method string) bool {
+func (ls *Node) QuickReject(from, method string) bool {
 	from = strings.ToLower(from)
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
@@ -745,7 +745,7 @@ func (ls *Links) QuickReject(from, method string) bool {
 
 // HandleIncoming processes an incoming transaction. The caller is responsible
 // for authentication (signature verification).
-func (ls *Links) HandleIncoming(env TxRequest) (*TxResponse, error) {
+func (ls *Node) HandleIncoming(env TxRequest) (*TxResponse, error) {
 	env.From = strings.ToLower(env.From)
 	ls.mu.Lock()
 
@@ -837,10 +837,10 @@ func (ls *Links) HandleIncoming(env TxRequest) (*TxResponse, error) {
 // ---------------------------------------------------------------------------
 
 // Kick triggers a sendPending for the given peer.
-func (ls *Links) Kick(peer string) { go ls.sendPending(peer) }
+func (ls *Node) Kick(peer string) { go ls.sendPending(peer) }
 
 // KickAll kicks all peers. Used at boot to resume pending work.
-func (ls *Links) KickAll() {
+func (ls *Node) KickAll() {
 	ls.mu.Lock()
 	peers := make([]string, 0, ls.Len())
 	for peer := range ls.m {
@@ -852,14 +852,14 @@ func (ls *Links) KickAll() {
 	}
 }
 
-// Schedule runs fn after delay under the Links mutex.
-// fn returns a list of peers to kick. Links commits and kicks.
+// Schedule runs fn after delay under the Node mutex.
+// fn returns a list of peers to kick. Node commits and kicks.
 // The timer is tracked so Stop() can cancel it.
 //
 // Schedule is called from two contexts: during init (no mutex held)
 // and from within a callback (mutex held). The timer append is safe
 // in both cases — init has no concurrency, callbacks hold the mutex.
-func (ls *Links) Schedule(delay time.Duration, fn func() []string) {
+func (ls *Node) Schedule(delay time.Duration, fn func() []string) {
 	var t *time.Timer
 	t = time.AfterFunc(delay, func() {
 		ls.mu.Lock()
@@ -879,11 +879,11 @@ func (ls *Links) Schedule(delay time.Duration, fn func() []string) {
 	ls.timers = append(ls.timers, t)
 }
 
-// Stop cancels all scheduled and retry timers and marks the Links as
+// Stop cancels all scheduled and retry timers and marks the Node as
 // stopped. After Stop, Schedule callbacks and sendPending are no-ops.
 // Must be called when deleting a node to prevent zombie timers from
 // re-persisting the node's state.
-func (ls *Links) Stop() {
+func (ls *Node) Stop() {
 	ls.mu.Lock()
 	ls.stopped = true
 	for _, t := range ls.timers {
@@ -899,7 +899,7 @@ func (ls *Links) Stop() {
 	ls.mu.Unlock()
 }
 
-func (ls *Links) sendPending(peer string) {
+func (ls *Node) sendPending(peer string) {
 	ls.mu.Lock()
 	if ls.stopped {
 		ls.mu.Unlock()
@@ -1001,7 +1001,7 @@ func (ls *Links) sendPending(peer string) {
 }
 
 // setRetry sets a per-peer retry timer. Caller must hold Lock.
-func (ls *Links) setRetry(peer string, counter uint64) {
+func (ls *Node) setRetry(peer string, counter uint64) {
 	if ls.stopped {
 		return
 	}
