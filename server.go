@@ -145,12 +145,12 @@ func (s *Server) newNode(id string, raw json.RawMessage) *Node {
 		}
 	}
 
-	var ls *Node
+	var n *Node
 
 	commit := func() {
-		ns := nodeState{ID: id, Links: ls.Map(), InviteMode: ls.InviteMode}
+		ns := nodeState{ID: id, Links: n.Map(), InviteMode: n.InviteMode}
 		ns.Handlers = make(map[string]json.RawMessage)
-		for name, mod := range ls.ModuleMap() {
+		for name, mod := range n.ModuleMap() {
 			if data, err := json.Marshal(mod); err == nil {
 				ns.Handlers[name] = data
 			}
@@ -164,21 +164,21 @@ func (s *Server) newNode(id string, raw json.RawMessage) *Node {
 		return s.Send(PeerDomain(peer), msg)
 	}
 
-	ls = NewNode(id, st.Links, st.InviteMode, send, commit)
+	n = NewNode(id, st.Links, st.InviteMode, send, commit)
 
 	schedule := func(delay time.Duration, fn func() []string) {
-		ls.Schedule(delay, fn)
+		n.Schedule(delay, fn)
 	}
 
 	for _, f := range s.factories {
-		m := f.factory(id, ls, schedule, handlerState(raw, f.name))
-		ls.RegisterModule(f.name, m)
+		m := f.factory(id, n, schedule, handlerState(raw, f.name))
+		n.RegisterModule(f.name, m)
 		if f.protected {
-			ls.Protected[f.name] = struct{}{}
+			n.Protected[f.name] = struct{}{}
 		}
 	}
 
-	return ls
+	return n
 }
 
 func handlerState(raw json.RawMessage, name string) json.RawMessage {
@@ -241,8 +241,8 @@ func (s *Server) Init() error {
 		}
 		s.nodes[user] = s.newNode(id, raw)
 	}
-	for _, ls := range s.nodes {
-		ls.KickAll()
+	for _, n := range s.nodes {
+		n.KickAll()
 	}
 	if s.cfg.AdminUser != "" && s.cfg.AdminPass != "" {
 		if err := s.bootstrapAdmin(s.cfg.AdminUser, s.cfg.AdminPass); err != nil {
@@ -329,13 +329,13 @@ func (s *Server) handleTx(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
-	ls := s.nodeByIdentity(env.To)
-	if ls == nil {
+	n := s.nodeByIdentity(env.To)
+	if n == nil {
 		httpError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
-	if ls.QuickReject(env.From, env.Method) {
+	if n.QuickReject(env.From, env.Method) {
 		httpError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
@@ -345,7 +345,7 @@ func (s *Server) handleTx(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, syncErr := ls.HandleIncoming(env)
+	resp, syncErr := n.HandleIncoming(env)
 	if syncErr != nil {
 		switch {
 		case errors.Is(syncErr, ErrNoLink):

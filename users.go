@@ -77,9 +77,9 @@ func (s *Server) createUser(username, password string, admin bool) error {
 		return nil
 	}
 	nodeID := username + "@" + s.cfg.Domain
-	ls := s.newNode(nodeID, nil)
+	n := s.newNode(nodeID, nil)
 	s.nmu.Lock()
-	s.nodes[username] = ls
+	s.nodes[username] = n
 	s.nmu.Unlock()
 	return nil
 }
@@ -221,8 +221,8 @@ func (s *Server) handleAdmin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.nmu.Lock()
-		if ls := s.nodes[p.Username]; ls != nil {
-			ls.Stop()
+		if n := s.nodes[p.Username]; n != nil {
+			n.Stop()
 		}
 		delete(s.nodes, p.Username)
 		s.nmu.Unlock()
