@@ -15,8 +15,9 @@ A **Server** hosts multiple nodes keyed by username, each identified as
 A **Link** is a bilateral sync primitive between two identities. Each side
 holds mirrored state with a shared counter and a deterministic turn bit
 — both sides can send simultaneously, but the turn bit resolves every
-collision deterministically, so conflicts never need manual resolution. Pending sends and cached responses are
-persisted, so nothing is lost if a node crashes mid-sync.
+collision deterministically, so conflicts never need manual resolution.
+Pending sends and cached responses are persisted, so nothing is lost if
+a node crashes mid-sync.
 
 A **Module** handles application-specific sync methods and account API
 calls. Modules are registered as factories and instantiated per node.
