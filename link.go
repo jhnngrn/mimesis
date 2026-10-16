@@ -95,6 +95,7 @@ type Module interface {
 	HandleResponse(peer, method string, payload json.RawMessage, ok bool, ts int64) []string
 	HandleAccount(method string, payload json.RawMessage) (json.RawMessage, []string, error)
 	NextTx(peer string) (string, json.RawMessage, int64)
+	Status() json.RawMessage
 }
 
 // QueuedMsg is a message queued for sending on a link.
@@ -655,7 +656,7 @@ func (ls *Links) HandleAccount(fullMethod string, payload json.RawMessage) (json
 	return result, err
 }
 
-// Status returns the link collection status as JSON.
+// Status returns the link collection status as JSON, including module status.
 func (ls *Links) Status() json.RawMessage {
 	links := make(map[string]any)
 	for peer, l := range ls.m {
@@ -663,10 +664,19 @@ func (ls *Links) Status() json.RawMessage {
 			"state": l.State,
 		}
 	}
-	return enc(map[string]any{
+	result := map[string]any{
 		"links":       links,
 		"invite_mode": ls.InviteMode,
-	})
+	}
+	for name, mod := range ls.moduleMap {
+		if extra := mod.Status(); extra != nil {
+			var m map[string]any
+			if json.Unmarshal(extra, &m) == nil {
+				result[name] = m
+			}
+		}
+	}
+	return enc(result)
 }
 
 // SetModules proposes the given modules on this link, filtering by supported.
