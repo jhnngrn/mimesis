@@ -56,9 +56,9 @@ func main() {
     if err != nil {
         panic(err)
     }
-    srv.Register("myapp", func(nodeID string, node *mimesis.Node, schedule mimesis.ScheduleFunc, state json.RawMessage) mimesis.Module {
+    srv.Register("myapp", func(name, nodeID string, node *mimesis.Node, schedule mimesis.ScheduleFunc, state json.RawMessage) mimesis.Module {
         return &myModule{}
-    }, false)
+    })
     mimesis.RunAndWait(srv)
 }
 ```
@@ -73,7 +73,7 @@ go run . -domain myapp.example.com -port 3000
 
 - `Boot()` — parse flags, create a server
 - `NewServer(Config)` — create with explicit config
-- `srv.Register(name, factory, protected)` — register a module factory
+- `srv.Register(name, factory)` — register a module factory
 - `srv.Init()` — load persisted nodes, set up HTTP routes
 - `srv.Run(ctx)` / `srv.Serve(ctx, listener)` — start serving
 - `RunAndWait(srv)` — init + serve + block until SIGINT/SIGTERM
