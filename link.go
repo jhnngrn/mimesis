@@ -628,7 +628,7 @@ func (ls *Links) HandleAccount(fullMethod string, payload json.RawMessage) (json
 		}
 		result = enc("ok")
 
-	case ns == "link" && method == "status":
+	case ns == "" && method == "status":
 		result = ls.Status()
 
 	case ns == "link":
