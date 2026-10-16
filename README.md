@@ -33,7 +33,6 @@ import (
 
 type myModule struct{ /* ... */ }
 
-func (m *myModule) Name() string { return "myapp" }
 func (m *myModule) HandleRequest(peer, method string, payload json.RawMessage, ts int64) (bool, []string, error) {
     // handle incoming sync
     return true, nil, nil
@@ -89,7 +88,6 @@ go run . -domain myapp.example.com -port 3000
 
 ```go
 type Module interface {
-    Name() string
     HandleRequest(peer, method string, payload json.RawMessage, ts int64) (bool, []string, error)
     HandleResponse(peer, method string, payload json.RawMessage, ok bool, ts int64) []string
     HandleAccount(method string, payload json.RawMessage) (json.RawMessage, []string, error)
