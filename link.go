@@ -676,7 +676,7 @@ func (n *Node) handleAccount(fullMethod string, payload json.RawMessage) (json.R
 			n.mu.Unlock()
 			return nil, fmt.Errorf("no link to %s", p.Peer)
 		}
-		lk.SetModules(p.Modules, n.moduleMap)
+		lk.setModules(p.Modules, n.moduleMap)
 		result = enc("ok")
 		kicks = []string{p.Peer}
 
@@ -844,7 +844,7 @@ func (l *Link) ConnectModules(modules []string, registered map[string]Module) {
 // SetModules proposes the given modules on this link, filtering by supported.
 // Modules not in the desired set and not yet connected are removed,
 // unless they hold refs.
-func (l *Link) SetModules(modules []string, registered map[string]Module) {
+func (l *Link) setModules(modules []string, registered map[string]Module) {
 	if l.State.Modules == nil {
 		l.State.Modules = map[string]*ConnectionState{}
 	}
