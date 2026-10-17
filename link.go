@@ -149,11 +149,11 @@ func (l *Link) UnrefModule(name string) {
 // Closing returns true if this link is closing (IntentClose is set).
 func (l *Link) Closing() bool { return l.State.IntentClose }
 
-// ModuleEnabled returns true if the named module is bilaterally active
-// and not closing on this link. Use this to decide whether to start new
-// work on the module. Mimesis dispatch uses moduleConnected instead,
+// ModuleAvailable returns true if the named module is bilaterally connected
+// and neither the module nor the link is closing. Use this to decide whether
+// to start new work. Mimesis dispatch uses moduleConnected instead,
 // so a closing module can still finish its in-flight messages.
-func (l *Link) ModuleEnabled(name string) bool {
+func (l *Link) ModuleAvailable(name string) bool {
 	if l.State.IntentClose {
 		return false
 	}

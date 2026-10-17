@@ -115,7 +115,7 @@ Methods available on a `*Link`:
 - `lk.Closing() bool` — true if the link is closing
 - `lk.RefModule(name)` — hold a ref on this module (keeps the link open)
 - `lk.UnrefModule(name)` — release the ref (sets IntentClose when all refs reach 0)
-- `lk.ModuleEnabled(name) bool` — true if module is bilaterally connected and not closing
+- `lk.ModuleAvailable(name) bool` — true if module is bilaterally connected and not closing
 - `lk.ConnectModules(modules, registered)` — request connection for modules (additive)
 
 
