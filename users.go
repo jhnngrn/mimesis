@@ -81,6 +81,7 @@ func (s *Server) createUser(username, password string, admin bool) error {
 	s.nmu.Lock()
 	s.nodes[username] = n
 	s.nmu.Unlock()
+	n.commit()
 	return nil
 }
 
