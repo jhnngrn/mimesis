@@ -682,8 +682,7 @@ func (n *Node) handleAccount(fullMethod string, payload json.RawMessage) (json.R
 
 	case ns == "link" && method == "accept":
 		var p struct {
-			Peer    string   `json:"peer"`
-			Modules []string `json:"modules,omitempty"`
+			Peer string `json:"peer"`
 		}
 		if err = json.Unmarshal(payload, &p); err != nil {
 			n.mu.Unlock()
@@ -700,9 +699,6 @@ func (n *Node) handleAccount(fullMethod string, payload json.RawMessage) (json.R
 			return nil, fmt.Errorf("link to %s is not incoming", p.Peer)
 		}
 		lk.State.IntentConnect = true
-		if len(p.Modules) > 0 {
-			lk.SetModules(p.Modules, n.moduleMap)
-		}
 		result = enc("ok")
 		kicks = []string{p.Peer}
 
