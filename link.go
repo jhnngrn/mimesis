@@ -116,9 +116,9 @@ type Link struct {
 	Sending        *peerSend     `json:"-"`
 }
 
-// RefModule increments the named module's ref count on this link.
+// refModule increments the named module's ref count on this link.
 // If the module goes from 0 to 1 refs, the link-level ref count is also incremented.
-func (l *Link) RefModule(name string) {
+func (l *Link) refModule(name string) {
 	mod := l.State.Modules[name]
 	if mod == nil {
 		return
@@ -129,10 +129,10 @@ func (l *Link) RefModule(name string) {
 	mod.Refs++
 }
 
-// UnrefModule decrements the named module's ref count on this link.
+// unrefModule decrements the named module's ref count on this link.
 // If the module goes from 1 to 0 refs, the link-level ref count is also decremented.
 // When all link-level refs reach 0, IntentClose is set.
-func (l *Link) UnrefModule(name string) {
+func (l *Link) unrefModule(name string) {
 	mod := l.State.Modules[name]
 	if mod == nil || mod.Refs == 0 {
 		return
@@ -149,11 +149,11 @@ func (l *Link) UnrefModule(name string) {
 // Closing returns true if this link is closing (IntentClose is set).
 func (l *Link) Closing() bool { return l.State.IntentClose }
 
-// ModuleAvailable returns true if the named module is bilaterally connected
+// moduleAvailable returns true if the named module is bilaterally connected
 // and neither the module nor the link is closing. Use this to decide whether
 // to start new work. Mimesis dispatch uses moduleConnected instead,
 // so a closing module can still finish its in-flight messages.
-func (l *Link) ModuleAvailable(name string) bool {
+func (l *Link) moduleAvailable(name string) bool {
 	if l.State.IntentClose {
 		return false
 	}
@@ -225,6 +225,29 @@ func (n *Node) registerModule(name string, m Module) {
 func (n *Node) ModuleMap() map[string]Module { return n.moduleMap }
 
 func (n *Node) Get(peer string) *Link { return n.Links[peer] }
+
+// RefModule increments the named module's ref count on the peer's link.
+func (n *Node) RefModule(peer, module string) {
+	if lk := n.Links[peer]; lk != nil {
+		lk.refModule(module)
+	}
+}
+
+// UnrefModule decrements the named module's ref count on the peer's link.
+func (n *Node) UnrefModule(peer, module string) {
+	if lk := n.Links[peer]; lk != nil {
+		lk.unrefModule(module)
+	}
+}
+
+// ModuleAvailable returns true if the named module on the peer's link is
+// bilaterally connected and neither the module nor the link is closing.
+func (n *Node) ModuleAvailable(peer, module string) bool {
+	if lk := n.Links[peer]; lk != nil {
+		return lk.moduleAvailable(module)
+	}
+	return false
+}
 func (n *Node) len() int              { return len(n.Links) }
 func (n *Node) full() bool            { return len(n.Links) >= maxLinks }
 func (n *Node) delete(peer string)    { delete(n.Links, peer) }

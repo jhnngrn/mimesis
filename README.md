@@ -107,15 +107,15 @@ The `*Node` received by the module factory:
 - `node.Get(peer) *Link` — get an existing link
 - `node.Connect(peer) (*Link, error)` — create an outgoing link (errors if exists or at capacity)
 - `node.ModuleMap() map[string]Module` — access other module instances
+- `node.RefModule(peer, module)` — hold a ref on a module (keeps the link open)
+- `node.UnrefModule(peer, module)` — release the ref (sets IntentClose when all refs reach 0)
+- `node.ModuleAvailable(peer, module) bool` — true if module is bilaterally connected and not closing
 
 ### Link
 
 Methods available on a `*Link`:
 
 - `lk.Closing() bool` — true if the link is closing
-- `lk.RefModule(name)` — hold a ref on this module (keeps the link open)
-- `lk.UnrefModule(name)` — release the ref (sets IntentClose when all refs reach 0)
-- `lk.ModuleAvailable(name) bool` — true if module is bilaterally connected and not closing
 - `lk.ConnectModules(modules, registered)` — request connection for modules (additive)
 
 
