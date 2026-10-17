@@ -855,12 +855,13 @@ func (l *Link) AcceptModule(name string) error {
 }
 
 // RejectModule rejects an incoming module proposal.
+// Sets IntentClose so the sync loop sends module_close to the peer.
 func (l *Link) RejectModule(name string) error {
 	mod := l.State.Modules[name]
 	if mod == nil || mod.Status != Incoming {
 		return fmt.Errorf("no incoming module %s", name)
 	}
-	delete(l.State.Modules, name)
+	mod.IntentClose = true
 	return nil
 }
 
