@@ -119,16 +119,19 @@ Methods available on a `*Link`:
 - `lk.ConnectModules(modules, registered)` — request connection for modules (additive)
 - `lk.SetModules(modules, registered)` — propose modules on this link (closes non-desired)
 
-### Account commands (link.*)
+### Account commands
 
 Built-in account API commands handled by mimesis directly:
 
+**link.\*** — link-level:
 - `link.accept {peer, modules?}` — accept an incoming link
 - `link.reject {peer}` — reject an incoming link
 - `link.set_modules {peer, modules}` — propose modules on a link
-- `link.accept_module {peer, module}` — accept an incoming module proposal
-- `link.reject_module {peer, module}` — reject an incoming module proposal
 - `link.set_invite_mode {mode}` — set invite mode (open/invite/closed)
+
+**module.\*** — module-level:
+- `module.accept {peer, module}` — accept an incoming module proposal
+- `module.reject {peer, module}` — reject an incoming module proposal
 
 ### Identity
 
