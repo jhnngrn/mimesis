@@ -154,6 +154,9 @@ func (l *Link) Closing() bool { return l.State.IntentClose }
 // work on the module. Mimesis dispatch uses moduleConnected instead,
 // so a closing module can still finish its in-flight messages.
 func (l *Link) ModuleEnabled(name string) bool {
+	if l.State.IntentClose {
+		return false
+	}
 	c := l.State.Modules[name]
 	return c != nil && c.Status == Connected && !c.IntentClose
 }
