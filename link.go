@@ -396,6 +396,9 @@ func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage,
 		case "module":
 			ok, err := l.reqModule(payload, n.moduleMap, n.InviteMode)
 			return ok, nil, err
+		case "module_close":
+			ok, err := l.reqModuleClose(payload)
+			return ok, nil, err
 		}
 		return false, nil, fmt.Errorf("unknown link method %q", method)
 	}
@@ -434,6 +437,8 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 			}
 		case "module":
 			l.respModule(payload, ok)
+		case "module_close":
+			l.respModuleClose(payload, ok)
 		}
 		return nil
 	}
@@ -461,6 +466,12 @@ func (n *Node) nextTx(peer string) *queuedMsg {
 	}
 	if lk.State.Status == Connected {
 		for name, mod := range lk.State.Modules {
+			if mod.IntentClose {
+				return &queuedMsg{
+					Method:  "link.module_close",
+					Payload: enc(map[string]string{"name": name}),
+				}
+			}
 			if mod.IntentConnect {
 				return &queuedMsg{
 					Method:  "link.module",
@@ -555,6 +566,39 @@ func (l *Link) respModule(payload json.RawMessage, ok bool) {
 		mod.Status = waiting
 	}
 	mod.IntentConnect = false
+}
+
+func (l *Link) reqModuleClose(payload json.RawMessage) (bool, error) {
+	var p struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(payload, &p) != nil || p.Name == "" {
+		return false, fmt.Errorf("bad payload")
+	}
+	mod := l.State.Modules[p.Name]
+	if mod == nil {
+		return true, nil // already gone
+	}
+	delete(l.State.Modules, p.Name)
+	return true, nil
+}
+
+func (l *Link) respModuleClose(payload json.RawMessage, ok bool) {
+	var p struct {
+		Name string `json:"name"`
+	}
+	if json.Unmarshal(payload, &p) != nil {
+		return
+	}
+	mod := l.State.Modules[p.Name]
+	if mod == nil {
+		return
+	}
+	if ok {
+		delete(l.State.Modules, p.Name)
+	} else {
+		mod.IntentClose = false
+	}
 }
 
 // ---------------------------------------------------------------------------
