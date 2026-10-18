@@ -875,6 +875,10 @@ func (l *Link) setModules(modules []string, registered map[string]Module) {
 			l.State.Modules[name] = &ConnectionState{IntentConnect: true}
 		} else if mod.Status != Connected {
 			mod.IntentConnect = true
+		} else if mod.IntentClose {
+			// Already connected but closing — set IntentConnect so
+			// nextTx can cancel both intents.
+			mod.IntentConnect = true
 		}
 	}
 	for name, mod := range l.State.Modules {
