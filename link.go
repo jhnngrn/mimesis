@@ -152,25 +152,6 @@ func (l *Link) Closing() bool { return l.State.IntentClose }
 // link.close until no module reports Busy.
 func (l *Link) Close() { l.State.IntentClose = true }
 
-// autoConnectModules sets IntentConnect on all non-app modules after the
-// app has connected. Only touches registered modules not already connected.
-func (l *Link) autoConnectModules(appName string, registered map[string]Module) {
-	if l.State.Modules == nil {
-		l.State.Modules = map[string]*ConnectionState{}
-	}
-	for name := range registered {
-		if name == appName {
-			continue
-		}
-		mod := l.State.Modules[name]
-		if mod == nil {
-			l.State.Modules[name] = &ConnectionState{IntentConnect: true}
-		} else if mod.Status != Connected {
-			mod.IntentConnect = true
-		}
-	}
-}
-
 // hasNonAppModules returns true if the link has any connected non-app modules.
 // Used to defer app close until all its modules are gone.
 func (n *Node) hasNonAppModules(l *Link) bool {
@@ -469,13 +450,6 @@ func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage,
 		switch method {
 		case "connect":
 			ok, err := l.reqModule(payload, n.moduleMap, n.InviteMode, n.appName)
-			// When the app just connected on incoming side, auto-connect modules.
-			if ok && n.appName != "" {
-				var p struct{ Name string `json:"name"` }
-				if json.Unmarshal(payload, &p) == nil && p.Name == n.appName {
-					l.autoConnectModules(n.appName, n.moduleMap)
-				}
-			}
 			return ok, nil, err
 		case "close":
 			ok, err := l.reqModuleClose(peer, payload, n.moduleMap, n.appName)
@@ -527,13 +501,6 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 		switch method {
 		case "connect":
 			l.respModule(payload, ok)
-			// When the app just connected, auto-connect all non-app modules.
-			if ok && n.appName != "" {
-				var p struct{ Name string `json:"name"` }
-				if json.Unmarshal(payload, &p) == nil && p.Name == n.appName {
-					l.autoConnectModules(n.appName, n.moduleMap)
-				}
-			}
 		case "close":
 			l.respModuleClose(payload, ok)
 		}
