@@ -177,6 +177,9 @@ func (l *Link) moduleAvailable(name string) bool {
 // moduleConnected returns true if the module is bilaterally connected,
 // regardless of IntentClose. Used internally for dispatch and NextTx.
 func (l *Link) moduleConnected(name string) bool {
+	if name == l.State.App {
+		return l.State.Status == Connected
+	}
 	c := l.State.Modules[name]
 	return c != nil && c.Status == Connected
 }
