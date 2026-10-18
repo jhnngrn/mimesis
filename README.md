@@ -96,6 +96,7 @@ type Module interface {
     HandleResponse(peer, method string, payload json.RawMessage, ok bool, ts int64) []string
     HandleAccount(method string, payload json.RawMessage) (json.RawMessage, []string, error)
     NextTx(peer string) (string, json.RawMessage, int64)
+    Busy(peer string) bool
     Status() json.RawMessage
 }
 ```
@@ -107,16 +108,26 @@ The `*Node` received by the module factory:
 - `node.Get(peer) *Link` — get an existing link
 - `node.Connect(peer) (*Link, error)` — create an outgoing link (errors if exists or at capacity)
 - `node.ModuleMap() map[string]Module` — access other module instances
-- `node.RefModule(peer, module)` — hold a ref on a module (keeps the link open)
-- `node.UnrefModule(peer, module)` — release the ref (sets IntentClose when all refs reach 0)
 - `node.ModuleAvailable(peer, module) bool` — true if module is bilaterally connected and not closing
 
-Refs are bilateral — both sides must mirror the same ref/unref calls in their `HandleRequest` and `HandleResponse` handlers. The requester refs in `HandleResponse` (when `ok`), the responder refs in `HandleRequest`. If only one side refs, it will hold the link open while the other tries to close it, resulting in `errRefsHeld`.
+### Module lifecycle
+
+Modules implement `Busy(peer string) bool` to report whether they have
+active work with a peer. The sync loop checks `Busy` before sending
+`module.close` or `link.close`, deferring the close until the module is
+idle. Because `Busy` reads bilateral state that only changes through
+req/resp exchanges, the peer is always in the sync loop when the
+transition happens — no polling or timers needed.
+
+`SetModules` marks unwanted modules with `IntentClose`. If a module is
+re-added via `SetModules` before the close message is sent, the opposing
+`IntentConnect` cancels `IntentClose` in `nextTx`.
 
 ### Link
 
 Methods available on a `*Link`:
 
+- `lk.Close()` — mark the link for closing (deferred until no module is Busy)
 - `lk.Closing() bool` — true if the link is closing
 - `lk.ConnectModules(modules, registered)` — request connection for modules (additive)
 
