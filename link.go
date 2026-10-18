@@ -128,16 +128,16 @@ func (n *Node) anyBusy(peer string) bool {
 
 // moduleBusy returns true if the named module reports being busy with
 // the given peer. Used to defer module.close until the module is idle.
-// If the module is the app, it also checks all (non-app) modules.
+// If the module is an app, it also checks all its child modules.
 func (n *Node) moduleBusy(name, peer string) bool {
 	if mod := n.moduleMap[name]; mod != nil {
 		if mod.Busy(peer) {
 			return true
 		}
 	}
-	if name == n.appName {
-		for mname, mod := range n.moduleMap {
-			if mname != n.appName && mod.Busy(peer) {
+	if children, ok := n.apps[name]; ok {
+		for _, child := range children {
+			if mod := n.moduleMap[child]; mod != nil && mod.Busy(peer) {
 				return true
 			}
 		}
@@ -152,11 +152,12 @@ func (l *Link) Closing() bool { return l.State.IntentClose }
 // link.close until no module reports Busy.
 func (l *Link) Close() { l.State.IntentClose = true }
 
-// hasNonAppModules returns true if the link has any connected non-app modules.
-// Used to defer app close until all its modules are gone.
-func (n *Node) hasNonAppModules(l *Link) bool {
-	for name, mod := range l.State.Modules {
-		if name != n.appName && mod.Status == Connected {
+// hasChildModules returns true if the link has any connected modules
+// belonging to the given app.
+func (n *Node) hasChildModules(appName string, l *Link) bool {
+	children := n.apps[appName]
+	for _, child := range children {
+		if mod := l.State.Modules[child]; mod != nil && mod.Status == Connected {
 			return true
 		}
 	}
@@ -210,7 +211,7 @@ type Node struct {
 	Links      map[string]*Link       `json:"links"`
 	InviteMode inviteMode             `json:"invite_mode,omitempty"`
 	Handlers   map[string]json.RawMessage `json:"handlers,omitempty"`
-	appName    string                 `json:"-"`
+	apps       map[string][]string    `json:"-"` // app name → supported module names
 	moduleMap  map[string]Module      `json:"-"`
 	// send delivers a sync message to a peer and returns the response body.
 	send   func(peer string, msg txRequest) ([]byte, error) `json:"-"`
@@ -228,21 +229,50 @@ func newNode(id string, links map[string]*Link, mode inviteMode, send func(strin
 	if mode == "" {
 		mode = inviteModeInvite
 	}
-	return &Node{ID: id, Links: links, InviteMode: mode, moduleMap: map[string]Module{}, send: send, commit: commit}
+	return &Node{ID: id, Links: links, InviteMode: mode, apps: map[string][]string{}, moduleMap: map[string]Module{}, send: send, commit: commit}
 }
 
-// registerApp registers a module as the app — the module that owns the
-// lifecycle. There can be at most one app per node. When the app connects
-// on a link, the framework auto-connects all other modules. When the app
-// closes, all modules must close first.
-func (n *Node) registerApp(name string, m Module) {
-	n.appName = name
+// registerApp registers an app — a module that owns the lifecycle on a link.
+// modules lists the module names this app supports under it.
+// Multiple apps can be registered; a given link has at most one.
+func (n *Node) registerApp(name string, m Module, modules []string) {
+	n.apps[name] = modules
 	n.moduleMap[name] = m
 }
 
 // registerModule adds a module to the node under the given name.
 func (n *Node) registerModule(name string, m Module) {
 	n.moduleMap[name] = m
+}
+
+// isApp returns true if the named module is a registered app.
+func (n *Node) isApp(name string) bool {
+	_, ok := n.apps[name]
+	return ok
+}
+
+// appFor returns the app name that owns the given module, or "" if the
+// module is not owned by any app (or is itself an app).
+func (n *Node) appFor(module string) string {
+	for app, mods := range n.apps {
+		for _, m := range mods {
+			if m == module {
+				return app
+			}
+		}
+	}
+	return ""
+}
+
+// appOnLink returns the app name connected (or connecting) on this link,
+// or "" if no app is on this link yet.
+func (n *Node) appOnLink(lk *Link) string {
+	for app := range n.apps {
+		if mod := lk.State.Modules[app]; mod != nil {
+			return app
+		}
+	}
+	return ""
 }
 
 // ModuleMap returns the registered modules for serialization.
@@ -449,10 +479,10 @@ func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage,
 		}
 		switch method {
 		case "connect":
-			ok, err := l.reqModule(payload, n.moduleMap, n.InviteMode, n.appName)
+			ok, err := l.reqModule(payload, n.moduleMap, n.InviteMode, n.apps)
 			return ok, nil, err
 		case "close":
-			ok, err := l.reqModuleClose(peer, payload, n.moduleMap, n.appName)
+			ok, err := l.reqModuleClose(peer, payload, n.moduleMap, n.apps)
 			return ok, nil, err
 		}
 		return false, nil, fmt.Errorf("unknown module method %q", method)
@@ -534,18 +564,20 @@ func (n *Node) nextTx(peer string) *queuedMsg {
 		return &queuedMsg{Method: "link.connect"}
 	}
 	if lk.State.Status == Connected {
-		// Module close/connect with app-aware ordering:
-		// Close: non-app modules first, then app.
-		// Connect: app first, then non-app modules.
+		// Cancel annihilating intents.
 		for _, mod := range lk.State.Modules {
 			if mod.IntentClose && mod.IntentConnect {
 				mod.IntentClose = false
 				mod.IntentConnect = false
 			}
 		}
-		// 1. Close non-app modules first.
+		// Close/connect with app-aware ordering:
+		// Close: child modules first, then their app.
+		// Connect: app first, then child modules.
+		//
+		// 1. Close child modules first.
 		for name, mod := range lk.State.Modules {
-			if name == n.appName {
+			if n.isApp(name) {
 				continue
 			}
 			if mod.IntentClose && !n.moduleBusy(name, peer) {
@@ -555,35 +587,41 @@ func (n *Node) nextTx(peer string) *queuedMsg {
 				}
 			}
 		}
-		// 2. Close app (only after all non-app modules are gone).
-		if appMod := lk.State.Modules[n.appName]; appMod != nil {
-			if appMod.IntentClose && !n.moduleBusy(n.appName, peer) && !n.hasNonAppModules(lk) {
-				return &queuedMsg{
-					Method:  "module.close",
-					Payload: enc(map[string]string{"name": n.appName}),
+		// 2. Close apps (only after their child modules are gone).
+		for app := range n.apps {
+			if appMod := lk.State.Modules[app]; appMod != nil {
+				if appMod.IntentClose && !n.moduleBusy(app, peer) && !n.hasChildModules(app, lk) {
+					return &queuedMsg{
+						Method:  "module.close",
+						Payload: enc(map[string]string{"name": app}),
+					}
 				}
 			}
 		}
-		// 3. Connect app first.
-		if appMod := lk.State.Modules[n.appName]; appMod != nil {
-			if appMod.IntentConnect {
-				return &queuedMsg{
-					Method:  "module.connect",
-					Payload: enc(map[string]string{"name": n.appName}),
-				}
-			}
-		}
-		// 4. Connect non-app modules (only if app is connected).
-		if lk.moduleConnected(n.appName) {
-			for name, mod := range lk.State.Modules {
-				if name == n.appName {
-					continue
-				}
-				if mod.IntentConnect {
+		// 3. Connect apps first.
+		for app := range n.apps {
+			if appMod := lk.State.Modules[app]; appMod != nil {
+				if appMod.IntentConnect {
 					return &queuedMsg{
 						Method:  "module.connect",
-						Payload: enc(map[string]string{"name": name}),
+						Payload: enc(map[string]string{"name": app}),
 					}
+				}
+			}
+		}
+		// 4. Connect child modules (only if their app is connected).
+		for name, mod := range lk.State.Modules {
+			if n.isApp(name) {
+				continue
+			}
+			app := n.appFor(name)
+			if app != "" && !lk.moduleConnected(app) {
+				continue
+			}
+			if mod.IntentConnect {
+				return &queuedMsg{
+					Method:  "module.connect",
+					Payload: enc(map[string]string{"name": name}),
 				}
 			}
 		}
@@ -615,7 +653,7 @@ func (n *Node) nextTx(peer string) *queuedMsg {
 // Module negotiation (internal)
 // ---------------------------------------------------------------------------
 
-func (l *Link) reqModule(payload json.RawMessage, modules map[string]Module, inviteMode inviteMode, appName string) (bool, error) {
+func (l *Link) reqModule(payload json.RawMessage, modules map[string]Module, inviteMode inviteMode, apps map[string][]string) (bool, error) {
 	var p struct {
 		Name string `json:"name"`
 	}
@@ -625,9 +663,13 @@ func (l *Link) reqModule(payload json.RawMessage, modules map[string]Module, inv
 	if _, ok := modules[p.Name]; !ok {
 		return false, nil // we don't speak this module
 	}
-	// Non-app modules require the app to be connected first.
-	if appName != "" && p.Name != appName && !l.moduleConnected(appName) {
-		return false, nil
+	// Non-app modules require their parent app to be connected first.
+	for app, children := range apps {
+		for _, child := range children {
+			if child == p.Name && !l.moduleConnected(app) {
+				return false, nil
+			}
+		}
 	}
 	if l.State.Modules == nil {
 		l.State.Modules = map[string]*ConnectionState{}
@@ -680,7 +722,7 @@ func (l *Link) respModule(payload json.RawMessage, ok bool) {
 	mod.IntentConnect = false
 }
 
-func (l *Link) reqModuleClose(peer string, payload json.RawMessage, modules map[string]Module, appName string) (bool, error) {
+func (l *Link) reqModuleClose(peer string, payload json.RawMessage, modules map[string]Module, apps map[string][]string) (bool, error) {
 	var p struct {
 		Name string `json:"name"`
 	}
@@ -694,10 +736,10 @@ func (l *Link) reqModuleClose(peer string, payload json.RawMessage, modules map[
 	if m := modules[p.Name]; m != nil && m.Busy(peer) {
 		return false, errRefsHeld
 	}
-	// Can't close the app while non-app modules are still connected.
-	if p.Name == appName {
-		for name, m := range l.State.Modules {
-			if name != appName && m.Status == Connected {
+	// Can't close an app while its child modules are still connected.
+	if children, isApp := apps[p.Name]; isApp {
+		for _, child := range children {
+			if m := l.State.Modules[child]; m != nil && m.Status == Connected {
 				return false, errRefsHeld
 			}
 		}

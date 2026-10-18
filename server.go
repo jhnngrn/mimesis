@@ -81,6 +81,7 @@ type moduleReg struct {
 	name    string
 	factory ModuleFactory
 	isApp   bool
+	modules []string // child module names (apps only)
 }
 
 // ---------------------------------------------------------------------------
@@ -107,12 +108,12 @@ type Server struct {
 	keyCache map[string]cachedKey
 }
 
-// RegisterApp adds an app module factory — the module that owns the lifecycle.
-// There can be at most one app per server. When the app connects on a link,
-// the framework auto-connects all other modules. When the app closes,
-// all modules must close first. Call before Init.
-func (s *Server) RegisterApp(name string, factory ModuleFactory) {
-	s.factories = append(s.factories, moduleReg{name: name, factory: factory, isApp: true})
+// RegisterApp adds an app module factory — a module that owns the lifecycle
+// on a link. modules lists the child module names this app supports.
+// Multiple apps can be registered; a given link has at most one.
+// Call before Init.
+func (s *Server) RegisterApp(name string, factory ModuleFactory, modules []string) {
+	s.factories = append(s.factories, moduleReg{name: name, factory: factory, isApp: true, modules: modules})
 }
 
 // Register adds a module factory. Call before Init.
@@ -170,7 +171,7 @@ func (s *Server) newNode(id string, raw json.RawMessage) *Node {
 	for _, f := range s.factories {
 		m := f.factory(f.name, id, n, schedule, loaded.Handlers[f.name])
 		if f.isApp {
-			n.registerApp(f.name, m)
+			n.registerApp(f.name, m, f.modules)
 		} else {
 			n.registerModule(f.name, m)
 		}
