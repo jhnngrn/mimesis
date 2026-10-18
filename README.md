@@ -162,7 +162,7 @@ Methods available on a `*Link`:
 
 - `lk.Close()` — mark the link for closing (deferred until no module is Busy)
 - `lk.Closing() bool` — true if the link is closing
-- `lk.ConnectModules(modules, registered)` — request connection for modules (additive)
+- `lk.ConnectModules(modules, registered, apps)` — request connection for child modules (additive)
 
 
 ### Account commands
