@@ -80,6 +80,7 @@ type ModuleFactory func(name, nodeID string, node *Node, schedule ScheduleFunc, 
 type moduleReg struct {
 	name    string
 	factory ModuleFactory
+	isApp   bool
 }
 
 // ---------------------------------------------------------------------------
@@ -104,6 +105,14 @@ type Server struct {
 
 	kmu      sync.Mutex
 	keyCache map[string]cachedKey
+}
+
+// RegisterApp adds an app module factory — the module that owns the lifecycle.
+// There can be at most one app per server. When the app connects on a link,
+// the framework auto-connects all other modules. When the app closes,
+// all modules must close first. Call before Init.
+func (s *Server) RegisterApp(name string, factory ModuleFactory) {
+	s.factories = append(s.factories, moduleReg{name: name, factory: factory, isApp: true})
 }
 
 // Register adds a module factory. Call before Init.
@@ -160,7 +169,11 @@ func (s *Server) newNode(id string, raw json.RawMessage) *Node {
 
 	for _, f := range s.factories {
 		m := f.factory(f.name, id, n, schedule, loaded.Handlers[f.name])
-		n.registerModule(f.name, m)
+		if f.isApp {
+			n.registerApp(f.name, m)
+		} else {
+			n.registerModule(f.name, m)
+		}
 	}
 
 	return n
