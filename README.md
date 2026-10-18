@@ -114,6 +114,27 @@ type Module interface {
 }
 ```
 
+### App interface
+
+A module declared as an app with `DeclareApp` must implement `App`, which
+embeds `Module` and adds lifecycle hooks:
+
+```go
+type App interface {
+    Module
+    OnConnect(peer string)
+    OnClose(peer string)
+}
+```
+
+`OnConnect` is called when `app.connect` completes bilaterally — on both
+the initiating and receiving side. `OnClose` is called when `app.close`
+completes bilaterally, just before the link is deleted. The app uses these
+to create and clean up per-peer state. Declared apps are validated at
+startup — if a module registered as an app does not implement `App`,
+the server fatals.
+```
+
 ### Node
 
 The `*Node` received by the module factory:
