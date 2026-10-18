@@ -232,14 +232,6 @@ func newNode(id string, links map[string]*Link, mode inviteMode, send func(strin
 	return &Node{ID: id, Links: links, InviteMode: mode, apps: map[string][]string{}, moduleMap: map[string]Module{}, send: send, commit: commit}
 }
 
-// registerApp registers an app — a module that owns the lifecycle on a link.
-// modules lists the module names this app supports under it.
-// Multiple apps can be registered; a given link has at most one.
-func (n *Node) registerApp(name string, m Module, modules []string) {
-	n.apps[name] = modules
-	n.moduleMap[name] = m
-}
-
 // registerModule adds a module to the node under the given name.
 func (n *Node) registerModule(name string, m Module) {
 	n.moduleMap[name] = m

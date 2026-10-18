@@ -80,8 +80,6 @@ type ModuleFactory func(name, nodeID string, node *Node, schedule ScheduleFunc, 
 type moduleReg struct {
 	name    string
 	factory ModuleFactory
-	isApp   bool
-	modules []string // child module names (apps only)
 }
 
 // ---------------------------------------------------------------------------
@@ -96,6 +94,7 @@ type Server struct {
 	client    *http.Client
 	mux       *http.ServeMux
 	factories []moduleReg
+	apps      map[string][]string // app name → child module names
 
 	nmu   sync.RWMutex
 	nodes map[string]*Node
@@ -108,17 +107,20 @@ type Server struct {
 	keyCache map[string]cachedKey
 }
 
-// RegisterApp adds an app module factory — a module that owns the lifecycle
-// on a link. modules lists the child module names this app supports.
-// Multiple apps can be registered; a given link has at most one.
-// Call before Init.
-func (s *Server) RegisterApp(name string, factory ModuleFactory, modules []string) {
-	s.factories = append(s.factories, moduleReg{name: name, factory: factory, isApp: true, modules: modules})
-}
-
 // Register adds a module factory. Call before Init.
 func (s *Server) Register(name string, factory ModuleFactory) {
 	s.factories = append(s.factories, moduleReg{name: name, factory: factory})
+}
+
+// DeclareApp declares a module as an app — a module that owns the lifecycle
+// on a link. children lists the module names this app supports under it.
+// Multiple apps can be declared; a given link has at most one.
+// Call before Init.
+func (s *Server) DeclareApp(name string, children []string) {
+	if s.apps == nil {
+		s.apps = map[string][]string{}
+	}
+	s.apps[name] = children
 }
 
 // Send posts a signed sync message to a peer's domain.
@@ -170,12 +172,9 @@ func (s *Server) newNode(id string, raw json.RawMessage) *Node {
 
 	for _, f := range s.factories {
 		m := f.factory(f.name, id, n, schedule, loaded.Handlers[f.name])
-		if f.isApp {
-			n.registerApp(f.name, m, f.modules)
-		} else {
-			n.registerModule(f.name, m)
-		}
+		n.registerModule(f.name, m)
 	}
+	n.apps = s.apps
 
 	return n
 }
