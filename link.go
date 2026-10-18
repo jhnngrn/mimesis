@@ -84,11 +84,12 @@ type Module interface {
 }
 
 // App is a Module that owns the lifecycle of a link. It is notified
-// when the bilateral app.connect handshake completes (both sides).
+// when the bilateral app.connect and app.close handshakes complete.
 // A module passed to DeclareApp must implement App.
 type App interface {
 	Module
 	OnConnect(peer string)
+	OnClose(peer string)
 }
 
 // queuedMsg is a message queued for sending on a link.
@@ -465,6 +466,9 @@ func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage,
 			if n.anyBusy(peer) {
 				return false, nil, errRefsHeld
 			}
+			if app, ok := n.moduleMap[l.State.App].(App); ok {
+				app.OnClose(peer)
+			}
 			n.delete(peer)
 			return true, nil, nil
 		}
@@ -517,6 +521,9 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 			l.State.IntentConnect = false
 		case "close":
 			if ok {
+				if app, ok := n.moduleMap[l.State.App].(App); ok {
+					app.OnClose(peer)
+				}
 				n.delete(peer)
 			} else {
 				l.State.IntentClose = false
