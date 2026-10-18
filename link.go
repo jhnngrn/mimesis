@@ -138,6 +138,10 @@ func (n *Node) moduleBusy(name, peer string) bool {
 // Closing returns true if this link is closing (IntentClose is set).
 func (l *Link) Closing() bool { return l.State.IntentClose }
 
+// Close marks this link for closing. The sync loop defers sending
+// link.close until no module reports Busy.
+func (l *Link) Close() { l.State.IntentClose = true }
+
 // moduleAvailable returns true if the named module is bilaterally connected
 // and neither the module nor the link is closing. Use this to decide whether
 // to start new work. Mimesis dispatch uses moduleConnected instead,
