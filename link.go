@@ -58,9 +58,10 @@ type ConnectionState struct {
 }
 
 
-// LinkState is a ConnectionState (for the link itself) plus per-module connections.
+// LinkState is a ConnectionState (for the link and its app) plus per-module connections.
 type LinkState struct {
 	ConnectionState
+	App     string                      `json:"app,omitempty"`
 	Modules map[string]*ConnectionState `json:"modules,omitempty"`
 }
 
