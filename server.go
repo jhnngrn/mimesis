@@ -94,6 +94,7 @@ type Server struct {
 	client    *http.Client
 	mux       *http.ServeMux
 	factories []moduleReg
+	apps      map[string][]string // app name → child module names
 
 	nmu   sync.RWMutex
 	nodes map[string]*Node
@@ -109,6 +110,17 @@ type Server struct {
 // Register adds a module factory. Call before Init.
 func (s *Server) Register(name string, factory ModuleFactory) {
 	s.factories = append(s.factories, moduleReg{name: name, factory: factory})
+}
+
+// DeclareApp declares a module as an app — a module that owns the lifecycle
+// on a link. children lists the module names this app supports under it.
+// Multiple apps can be declared; a given link has at most one.
+// Call before Init.
+func (s *Server) DeclareApp(name string, children []string) {
+	if s.apps == nil {
+		s.apps = map[string][]string{}
+	}
+	s.apps[name] = children
 }
 
 // Send posts a signed sync message to a peer's domain.
@@ -161,6 +173,18 @@ func (s *Server) newNode(id string, raw json.RawMessage) *Node {
 	for _, f := range s.factories {
 		m := f.factory(f.name, id, n, schedule, loaded.Handlers[f.name])
 		n.registerModule(f.name, m)
+	}
+	n.apps = s.apps
+
+	// Validate that declared apps implement the App interface.
+	for name := range s.apps {
+		mod := n.moduleMap[name]
+		if mod == nil {
+			log.Fatalf("node %s: declared app %q not registered", id, name)
+		}
+		if _, ok := mod.(App); !ok {
+			log.Fatalf("node %s: module %q declared as app but does not implement App", id, name)
+		}
 	}
 
 	return n
