@@ -65,17 +65,24 @@ func validDomain(d string) bool {
 	return true
 }
 
+// splitIdentity returns the user and domain parts of an already-validated
+// identity string. It does no validation — use ParseIdentity for untrusted input.
+func splitIdentity(id string) (user, domain string) {
+	i := strings.Index(id, "@")
+	if i < 0 {
+		return id, ""
+	}
+	return id[:i], id[i+1:]
+}
+
 // peerDomain extracts the domain part of a peer identity.
 func peerDomain(peer string) string {
-	_, d, err := ParseIdentity(peer)
-	if err != nil {
-		return ""
-	}
+	_, d := splitIdentity(peer)
 	return d
 }
 
 // identityInDomain reports whether the identity belongs to the given domain.
 func identityInDomain(identity, domain string) bool {
-	_, d, err := ParseIdentity(identity)
-	return err == nil && d == domain
+	_, d := splitIdentity(identity)
+	return d == domain
 }
