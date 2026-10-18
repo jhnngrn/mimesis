@@ -127,6 +127,7 @@ re-added via `SetModules` before the close message is sent, the opposing
 
 Methods available on a `*Link`:
 
+- `lk.Close()` — mark the link for closing (deferred until no module is Busy)
 - `lk.Closing() bool` — true if the link is closing
 - `lk.ConnectModules(modules, registered)` — request connection for modules (additive)
 
