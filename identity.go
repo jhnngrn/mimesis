@@ -17,6 +17,9 @@ func ParseIdentity(id string) (user, domain string, err error) {
 	if !validUsername(user) {
 		return "", "", fmt.Errorf("invalid username %q", user)
 	}
+	if !validDomain(domain) {
+		return "", "", fmt.Errorf("invalid domain %q", domain)
+	}
 	return user, domain, nil
 }
 
@@ -27,6 +30,35 @@ func validUsername(u string) bool {
 	}
 	for _, c := range u {
 		if !(c == '_' || c == '-' || c == '.' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
+// validDomain returns true if d is a valid domain component (host or host:port).
+func validDomain(d string) bool {
+	if len(d) == 0 {
+		return false
+	}
+	host := d
+	if i := strings.LastIndex(d, ":"); i >= 0 {
+		host = d[:i]
+		port := d[i+1:]
+		if len(port) == 0 || len(port) > 5 {
+			return false
+		}
+		for _, c := range port {
+			if c < '0' || c > '9' {
+				return false
+			}
+		}
+	}
+	if len(host) == 0 || len(host) > 253 {
+		return false
+	}
+	for _, c := range host {
+		if !(c == '.' || c == '-' || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) {
 			return false
 		}
 	}
