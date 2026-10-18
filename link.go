@@ -487,6 +487,11 @@ func (n *Node) nextTx(peer string) *queuedMsg {
 	if lk == nil {
 		return nil
 	}
+	// Cancel: both intents set before any message sent — they annihilate.
+	if lk.State.IntentClose && lk.State.IntentConnect {
+		lk.State.IntentClose = false
+		lk.State.IntentConnect = false
+	}
 	if lk.State.IntentClose && !n.anyBusy(peer) {
 		return &queuedMsg{Method: "link.close"}
 	}
@@ -495,6 +500,12 @@ func (n *Node) nextTx(peer string) *queuedMsg {
 	}
 	if lk.State.Status == Connected {
 		for name, mod := range lk.State.Modules {
+			// Cancel: both intents set before any message sent.
+			if mod.IntentClose && mod.IntentConnect {
+				mod.IntentClose = false
+				mod.IntentConnect = false
+				continue
+			}
 			if mod.IntentClose && !n.moduleBusy(name, peer) {
 				return &queuedMsg{
 					Method:  "module.close",
