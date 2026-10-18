@@ -133,7 +133,6 @@ completes bilaterally, just before the link is deleted. The app uses these
 to create and clean up per-peer state. Declared apps are validated at
 startup — if a module registered as an app does not implement `App`,
 the server fatals.
-```
 
 ### Node
 
