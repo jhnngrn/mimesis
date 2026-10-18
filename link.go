@@ -83,6 +83,14 @@ type Module interface {
 	Busy(peer string) bool
 }
 
+// App is a Module that owns the lifecycle of a link. It is notified
+// when the bilateral app.connect handshake completes (both sides).
+// A module passed to DeclareApp must implement App.
+type App interface {
+	Module
+	OnConnect(peer string)
+}
+
 // queuedMsg is a message queued for sending on a link.
 // QueuedAt is a unix-second timestamp of when the message was queued.
 // When multiple modules return a candidate for the same peer, the
@@ -439,11 +447,17 @@ func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage,
 				}
 				l.State.Status = Connected
 				l.State.IntentConnect = false
+				if app, ok := n.moduleMap[p.Name].(App); ok {
+					app.OnConnect(peer)
+				}
 				return true, nil, nil
 			}
 			if n.InviteMode == inviteModeOpen {
 				l.State.App = p.Name
 				l.State.Status = Connected
+				if app, ok := n.moduleMap[p.Name].(App); ok {
+					app.OnConnect(peer)
+				}
 				return true, nil, nil
 			}
 			return false, nil, nil
@@ -494,6 +508,9 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 		case "connect":
 			if ok {
 				l.State.Status = Connected
+				if app, ok := n.moduleMap[l.State.App].(App); ok {
+					app.OnConnect(peer)
+				}
 			} else {
 				l.State.Status = waiting
 			}
