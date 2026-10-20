@@ -19,17 +19,13 @@ collision deterministically, so conflicts never need manual resolution.
 Pending sends and cached responses are persisted, so nothing is lost if
 a node crashes mid-sync.
 
-A **Root module** owns the lifecycle on a link. The root name is
-sent in `link.connect` and stored in `LinkState.Root`. A link runs exactly
-one root. Multiple roots can be declared on a server; which one runs is
-decided at connect time by the code calling `Connect(peer, root)`.
-
 A **Module** handles application-specific sync methods and account API
 calls. Modules are registered as factories and instantiated per node.
-Every module has `OnConnect`/`OnClose` lifecycle hooks. Child modules are
-declared under a root with `DeclareRoot` or nested further with
-`DeclareChildren` — they can only connect on a link that runs their
-parent root.
+Every module has `OnConnect`/`OnClose` lifecycle hooks. After a link
+connects, all parentless modules (registered but not declared as a child
+of any other) automatically begin connecting via `module.connect`. Child
+modules are declared with `DeclareChildren` — they connect after their
+parent is connected, forming a hierarchy.
 
 ## Usage
 
@@ -74,7 +70,7 @@ func main() {
         return &myModule{}
     })
     srv.Register("helper", newHelper)
-    srv.DeclareRoot("myapp", []string{"helper"}) // myapp is a root with helper as child module
+    srv.DeclareChildren("myapp", []string{"helper"}) // helper connects after myapp
     mimesis.RunAndWait(srv)
 }
 ```
@@ -90,8 +86,7 @@ go run . -domain myapp.example.com -port 3000
 - `Boot()` — parse flags, create a server
 - `NewServer(Config)` — create with explicit config
 - `srv.Register(name, factory)` — register a module factory
-- `srv.DeclareRoot(name, children)` — declare a module as a root with optional child modules
-- `srv.DeclareChildren(parent, children)` — declare child modules under a parent (for nested hierarchies)
+- `srv.DeclareChildren(parent, children)` — declare child modules under a parent (children connect after parent)
 - `srv.Init()` — load persisted nodes, set up HTTP routes
 - `srv.Run(ctx)` / `srv.Serve(ctx, listener)` — start serving
 - `RunAndWait(srv)` — init + serve + block until SIGINT/SIGTERM
@@ -121,9 +116,9 @@ type Module interface {
 }
 ```
 
-`OnConnect` is called when `link.connect` completes bilaterally — on both
-the initiating and receiving side. `OnClose` is called when `link.close`
-completes bilaterally, just before the link is deleted. Every module gets
+`OnConnect` is called when `module.connect` completes bilaterally — on both
+the initiating and receiving side. `OnClose` is called when `module.close`
+completes bilaterally, or when the link itself closes. Every module gets
 these lifecycle hooks to create and clean up per-peer state.
 
 ### Node
@@ -131,7 +126,7 @@ these lifecycle hooks to create and clean up per-peer state.
 The `*Node` received by the module factory:
 
 - `node.Get(peer) *Link` — get an existing link
-- `node.Connect(peer, root) (*Link, error)` — create an outgoing link running the named root module
+- `node.Connect(peer) (*Link, error)` — create an outgoing link to peer
 - `node.ModuleMap() map[string]Module` — access other module instances
 - `node.ModuleAvailable(peer, module) bool` — true if module is bilaterally connected and not closing
 
@@ -154,7 +149,7 @@ Methods available on a `*Link`:
 
 - `lk.Close()` — mark the link for closing (deferred until no module is Busy)
 - `lk.Closing() bool` — true if the link is closing
-- `lk.ConnectModules(modules, registered, roots)` — request connection for child modules (additive)
+- `lk.ConnectModules(modules, registered)` — request connection for modules (additive)
 
 
 ### Account commands
