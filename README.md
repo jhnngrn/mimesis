@@ -143,6 +143,11 @@ transition happens — no polling or timers needed.
 re-added via `SetModules` before the close message is sent, the opposing
 `IntentConnect` cancels `IntentClose` in `nextTx`.
 
+When all modules on a link are disconnected (and none are pending
+connect), the link automatically closes. Modules act as the link's
+reference count — the link lives as long as at least one module is
+connected. `lk.Close()` still works for explicit teardown.
+
 ### Link
 
 Methods available on a `*Link`:
