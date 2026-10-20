@@ -19,15 +19,13 @@ collision deterministically, so conflicts never need manual resolution.
 Pending sends and cached responses are persisted, so nothing is lost if
 a node crashes mid-sync.
 
-An **App** is a module that owns the lifecycle on a link. The app name is
-sent in `app.connect` and stored in `LinkState.App`. A link runs exactly
-one app. Multiple apps can be declared on a server; which one runs is
-decided at connect time by the code calling `Connect(peer, app)`.
-
 A **Module** handles application-specific sync methods and account API
 calls. Modules are registered as factories and instantiated per node.
-Child modules are declared under an app with `DeclareApp` — they can only
-connect on a link that runs their parent app.
+Every module has `OnConnect`/`OnClose` lifecycle hooks. After a link
+connects, all parentless modules (registered but not declared as a child
+of any other) automatically begin connecting via `module.connect`. Child
+modules are declared with `DeclareChildren` — they connect after their
+parent is connected, forming a hierarchy.
 
 ## Usage
 
@@ -41,6 +39,8 @@ import (
 
 type myModule struct{ /* ... */ }
 
+func (m *myModule) OnConnect(peer string) {}
+func (m *myModule) OnClose(peer string)   {}
 func (m *myModule) HandleRequest(peer, method string, payload json.RawMessage, ts int64) (bool, []string, error) {
     // handle incoming sync
     return true, nil, nil
@@ -70,7 +70,7 @@ func main() {
         return &myModule{}
     })
     srv.Register("helper", newHelper)
-    srv.DeclareApp("myapp", []string{"helper"}) // myapp is an app with helper as child module
+    srv.DeclareChildren("myapp", []string{"helper"}) // helper connects after myapp
     mimesis.RunAndWait(srv)
 }
 ```
@@ -86,7 +86,7 @@ go run . -domain myapp.example.com -port 3000
 - `Boot()` — parse flags, create a server
 - `NewServer(Config)` — create with explicit config
 - `srv.Register(name, factory)` — register a module factory
-- `srv.DeclareApp(name, children)` — declare a module as an app with optional child modules
+- `srv.DeclareChildren(parent, children)` — declare child modules under a parent (children connect after parent)
 - `srv.Init()` — load persisted nodes, set up HTTP routes
 - `srv.Run(ctx)` / `srv.Serve(ctx, listener)` — start serving
 - `RunAndWait(srv)` — init + serve + block until SIGINT/SIGTERM
@@ -105,6 +105,8 @@ go run . -domain myapp.example.com -port 3000
 
 ```go
 type Module interface {
+    OnConnect(peer string)
+    OnClose(peer string)
     HandleRequest(peer, method string, payload json.RawMessage, ts int64) (bool, []string, error)
     HandleResponse(peer, method string, payload json.RawMessage, ok bool, ts int64) []string
     HandleAccount(method string, payload json.RawMessage) (json.RawMessage, []string, error)
@@ -114,32 +116,17 @@ type Module interface {
 }
 ```
 
-### App interface
-
-A module declared as an app with `DeclareApp` must implement `App`, which
-embeds `Module` and adds lifecycle hooks:
-
-```go
-type App interface {
-    Module
-    OnConnect(peer string)
-    OnClose(peer string)
-}
-```
-
-`OnConnect` is called when `app.connect` completes bilaterally — on both
-the initiating and receiving side. `OnClose` is called when `app.close`
-completes bilaterally, just before the link is deleted. The app uses these
-to create and clean up per-peer state. Declared apps are validated at
-startup — if a module registered as an app does not implement `App`,
-the server fatals.
+`OnConnect` is called when `module.connect` completes bilaterally — on both
+the initiating and receiving side. `OnClose` is called when `module.close`
+completes bilaterally, or when the link itself closes. Every module gets
+these lifecycle hooks to create and clean up per-peer state.
 
 ### Node
 
 The `*Node` received by the module factory:
 
 - `node.Get(peer) *Link` — get an existing link
-- `node.Connect(peer, app) (*Link, error)` — create an outgoing link running the named app
+- `node.Connect(peer) (*Link, error)` — create an outgoing link to peer
 - `node.ModuleMap() map[string]Module` — access other module instances
 - `node.ModuleAvailable(peer, module) bool` — true if module is bilaterally connected and not closing
 
@@ -147,7 +134,7 @@ The `*Node` received by the module factory:
 
 Modules implement `Busy(peer string) bool` to report whether they have
 active work with a peer. The sync loop checks `Busy` before sending
-`module.close` or `app.close`, deferring the close until the module is
+`module.close` or `link.close`, deferring the close until the module is
 idle. Because `Busy` reads bilateral state that only changes through
 req/resp exchanges, the peer is always in the sync loop when the
 transition happens — no polling or timers needed.
@@ -156,24 +143,29 @@ transition happens — no polling or timers needed.
 re-added via `SetModules` before the close message is sent, the opposing
 `IntentConnect` cancels `IntentClose` in `nextTx`.
 
+When all modules on a link are disconnected (and none are pending
+connect), the link automatically closes. Modules act as the link's
+reference count — the link lives as long as at least one module is
+connected. `lk.Close()` still works for explicit teardown.
+
 ### Link
 
 Methods available on a `*Link`:
 
 - `lk.Close()` — mark the link for closing (deferred until no module is Busy)
 - `lk.Closing() bool` — true if the link is closing
-- `lk.ConnectModules(modules, registered, apps)` — request connection for child modules (additive)
+- `lk.ConnectModules(modules, registered)` — request connection for modules (additive)
 
 
 ### Account commands
 
 Built-in account API commands handled by mimesis directly:
 
-**app.\*** — app-level:
-- `app.accept {peer}` — accept an incoming link
-- `app.reject {peer}` — reject an incoming link
-- `app.set_modules {peer, modules}` — propose modules on a link
-- `app.set_invite_mode {mode}` — set invite mode (open/invite/closed)
+**link.\*** — link-level:
+- `link.accept {peer}` — accept an incoming link
+- `link.reject {peer}` — reject an incoming link
+- `link.set_modules {peer, modules}` — propose modules on a link
+- `link.set_invite_mode {mode}` — set invite mode (open/invite/closed)
 
 **module.\*** — module-level:
 - `module.accept {peer, module}` — accept an incoming module proposal
