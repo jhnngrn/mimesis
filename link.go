@@ -597,6 +597,7 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 					// First connect ACKed — wait for peer to accept.
 					l.State.Status = waiting
 				}
+				l.State.IntentConnect = false
 			} else {
 				// NACK — definitive rejection, remove the link.
 				delete(n.Links, peer)
