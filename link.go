@@ -501,8 +501,8 @@ func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage,
 				return false, nil, errRefsHeld
 			}
 			if l.State.Status == Connected {
-				for name := range l.State.Modules {
-					if mod := n.moduleMap[name]; mod != nil {
+				for name, c := range l.State.Modules {
+					if mod := n.moduleMap[name]; mod != nil && c.Status == Connected {
 						mod.OnClose(peer)
 					}
 				}
@@ -580,8 +580,8 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 		case "close":
 			if ok {
 				if l.State.Status == Connected {
-					for name := range l.State.Modules {
-						if mod := n.moduleMap[name]; mod != nil {
+					for name, c := range l.State.Modules {
+						if mod := n.moduleMap[name]; mod != nil && c.Status == Connected {
 							mod.OnClose(peer)
 						}
 					}
@@ -787,7 +787,11 @@ func (l *Link) reqModuleClose(peer string, payload json.RawMessage, modules map[
 	if m := modules[p.Name]; m != nil && m.Busy(peer) {
 		return false, "", errRefsHeld
 	}
+	wasConnected := mod.Status == Connected
 	delete(l.State.Modules, p.Name)
+	if !wasConnected {
+		return true, "", nil // never OnConnect'ed — no OnClose
+	}
 	return true, p.Name, nil
 }
 
@@ -805,7 +809,11 @@ func (l *Link) respModuleClose(payload json.RawMessage, ok bool) string {
 		return ""
 	}
 	if ok {
+		wasConnected := mod.Status == Connected
 		delete(l.State.Modules, p.Name)
+		if !wasConnected {
+			return "" // never OnConnect'ed — no OnClose
+		}
 		return p.Name
 	}
 	mod.IntentClose = false
