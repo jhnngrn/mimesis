@@ -495,8 +495,10 @@ func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage,
 			if l.State.Status == Connected {
 				return false, nil, fmt.Errorf("link already connected")
 			}
-			// Root mismatch is a definitive NACK.
+			// Root mismatch is a definitive NACK — remove the link
+			// so both sides reset to counter 0.
 			if l.State.Root != "" && l.State.Root != p.Name {
+				delete(n.Links, peer)
 				return false, nil, nil
 			}
 			if l.State.Root == "" {
@@ -599,7 +601,6 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 				// NACK — definitive rejection, remove the link.
 				delete(n.Links, peer)
 			}
-			l.State.IntentConnect = false
 		case "close":
 			if ok {
 				if l.State.Status == Connected {
