@@ -1096,6 +1096,7 @@ func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
 	}
 
 	now := nowSecs()
+	pbApplied := false
 
 	// Piggybacked response.
 	if env.Resp != nil && lk.Pending != nil && env.Counter == lk.Counter+1 {
@@ -1109,6 +1110,7 @@ func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
 			n.kick(k)
 		}
 		n.kick(env.From)
+		pbApplied = true
 	}
 
 	// Validate counter and collision.
@@ -1139,7 +1141,9 @@ func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
 
 	resp := lk.AcceptRequest(env.Counter, ok, ts)
 	n.commit()
-	n.kick(env.From)
+	if !pbApplied {
+		n.kick(env.From)
+	}
 	for _, k := range dispatchKicks {
 		n.kick(k)
 	}
@@ -1178,9 +1182,9 @@ func (n *Node) schedule(delay time.Duration, fn func() []string) {
 	var t *time.Timer
 	t = time.AfterFunc(delay, func() {
 		n.mu.Lock()
+		defer n.mu.Unlock()
 		delete(n.timers, t)
 		if n.stopped {
-			n.mu.Unlock()
 			return
 		}
 		kicks := fn()
@@ -1188,7 +1192,6 @@ func (n *Node) schedule(delay time.Duration, fn func() []string) {
 		for _, k := range kicks {
 			n.kick(k)
 		}
-		n.mu.Unlock()
 	})
 	// No mutex lock here — called under mutex (callback) or during
 	// init (no concurrency). Locking would deadlock in the callback case.
