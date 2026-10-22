@@ -1121,11 +1121,12 @@ func (n *Node) handleIncomingLocked(env txRequest) (*txResponse, []string, error
 		lk.AcceptResponse(env.Resp.Timestamp)
 		n.commit()
 		kicks = append(kicks, pbKicks...)
+		kicks = append(kicks, env.From)
 	}
 
 	// Validate counter and collision.
 	if cached, err := lk.ValidateRequest(env.Counter); err != nil {
-		return nil, nil, err
+		return nil, kicks, err
 	} else if cached != nil {
 		return cached, kicks, nil
 	}
@@ -1140,13 +1141,13 @@ func (n *Node) handleIncomingLocked(env txRequest) (*txResponse, []string, error
 
 	// Validate peer timestamp (monotonicity + forward cap).
 	if err := lk.ValidateTimestamp(ts, now); err != nil {
-		return nil, nil, err
+		return nil, kicks, err
 	}
 
 	// Dispatch to handler.
 	ok, dispatchKicks, reqErr := n.dispatchRequest(env.From, env.Method, env.Payload, ts)
 	if reqErr != nil {
-		return nil, nil, reqErr
+		return nil, kicks, reqErr
 	}
 
 	resp := lk.AcceptRequest(env.Counter, ok, ts)
