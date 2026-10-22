@@ -124,8 +124,9 @@ type Module interface {
 `OnConnect` is called when a module becomes bilaterally connected — on
 `link.connect` for the root module, and on `module.connect` for child
 modules. `OnClose` is called when a module is disconnected — on
-`module.close` for child modules, and on `link.close` for all modules
-(children first, then root), just before the link is deleted. Modules
+`module.close` for child modules, and on `link.close` for all connected
+modules (children first, then root), just before the link is deleted.
+Only modules that received `OnConnect` will receive `OnClose`. Modules
 use these to create and clean up per-peer state. Modules that don't need
 lifecycle hooks provide empty implementations.
 
