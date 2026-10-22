@@ -320,7 +320,7 @@ func (n *Node) Connect(peer, root string) (*Link, error) {
 //   - (nil, nil) — valid, proceed with dispatch
 func (l *Link) ValidateRequest(counter uint64) (*txResponse, error) {
 	if counter < l.Counter {
-		if l.CachedResponse != nil && l.CachedResponse.Counter == counter {
+		if l.CachedResponse != nil && counter == l.Counter-1 {
 			resp := *l.CachedResponse
 			return &resp, nil
 		}
@@ -351,7 +351,7 @@ func (l *Link) ValidateTimestamp(ts, now int64) error {
 // AcceptRequest finalizes an incoming request. Call after the handler
 // has processed the request. Returns the response to send back.
 func (l *Link) AcceptRequest(reqCounter uint64, ok bool, ts int64) *txResponse {
-	resp := txResponse{Counter: reqCounter, OK: ok, Timestamp: ts}
+	resp := txResponse{OK: ok, Timestamp: ts}
 	l.CachedResponse = &resp
 	l.Counter++
 	l.Timestamp = ts
@@ -365,6 +365,7 @@ func (l *Link) AcceptResponse(ts int64) {
 	l.Counter++
 	l.Timestamp = ts
 	l.Pending = nil
+	l.CachedResponse = nil
 }
 
 
@@ -385,9 +386,8 @@ type txRequest struct {
 
 // txResponse is the wire envelope for a transaction response.
 type txResponse struct {
-	Counter   uint64 `json:"counter"`
-	OK        bool   `json:"ok"`
-	Timestamp int64  `json:"timestamp"`
+	OK        bool  `json:"ok"`
+	Timestamp int64 `json:"timestamp"`
 }
 
 // ---------------------------------------------------------------------------
@@ -1081,7 +1081,7 @@ func (n *Node) handleIncomingLocked(env txRequest) (*txResponse, []string, error
 	lk := n.Get(env.From)
 	if lk == nil {
 		if env.Method == "link.close" {
-			return &txResponse{Counter: env.Counter, OK: true, Timestamp: nowSecs()}, nil, nil
+			return &txResponse{OK: true, Timestamp: nowSecs()}, nil, nil
 		}
 		if env.Method != "link.connect" {
 			return nil, nil, errNoLink
@@ -1113,7 +1113,7 @@ func (n *Node) handleIncomingLocked(env txRequest) (*txResponse, []string, error
 	var kicks []string
 
 	// Piggybacked response.
-	if env.Resp != nil && lk.Pending != nil && env.Resp.Counter == lk.Counter {
+	if env.Resp != nil && lk.Pending != nil {
 		if err := lk.ValidateTimestamp(env.Resp.Timestamp, now); err != nil {
 			return nil, nil, err
 		}
@@ -1291,10 +1291,7 @@ func (n *Node) sendPending(peer string) {
 		return
 	}
 	lk = n.Get(peer)
-	if lk == nil || lk.Pending != msg || lk.Counter != counter || resp.Counter != counter {
-		if lk != nil {
-			lk.Sending = nil
-		}
+	if lk == nil || lk.Pending != msg || lk.Counter != counter {
 		n.mu.Unlock()
 		return
 	}
