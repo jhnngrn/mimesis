@@ -530,12 +530,7 @@ func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage,
 			}
 			return ok, nil, err
 		case "close":
-			ok, closed, err := l.reqModuleClose(peer, payload, n.moduleMap, n.roots)
-			if closed != "" {
-				if mod := n.moduleMap[closed]; mod != nil {
-					mod.OnClose(peer)
-				}
-			}
+			ok, err := l.reqModuleClose(peer, payload, n.moduleMap, n.roots)
 			return ok, nil, err
 		}
 		return false, nil, fmt.Errorf("unknown module method %q", method)
@@ -609,11 +604,7 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 				}
 			}
 		case "close":
-			if closed := l.respModuleClose(payload, ok); closed != "" {
-				if mod := n.moduleMap[closed]; mod != nil {
-					mod.OnClose(peer)
-				}
-			}
+			l.respModuleClose(peer, payload, ok, n.moduleMap)
 		}
 		return nil
 	}
@@ -768,56 +759,59 @@ func (l *Link) respModule(payload json.RawMessage, ok bool) string {
 	return ""
 }
 
-// reqModuleClose returns (ok, closedModule, error). closedModule is non-empty
-// when the module was just removed, so the caller can fire OnClose.
-func (l *Link) reqModuleClose(peer string, payload json.RawMessage, modules map[string]Module, roots map[string][]string) (bool, string, error) {
+// reqModuleClose handles an incoming module.close request. It removes the
+// module from the link and fires OnClose if the module was connected.
+func (l *Link) reqModuleClose(peer string, payload json.RawMessage, modules map[string]Module, roots map[string][]string) (bool, error) {
 	var p struct {
 		Name string `json:"name"`
 	}
 	if json.Unmarshal(payload, &p) != nil || p.Name == "" {
-		return false, "", fmt.Errorf("bad payload")
+		return false, fmt.Errorf("bad payload")
 	}
 	if !isChildModule(p.Name, l.State.Root, roots) {
-		return false, "", nil
+		return false, nil
 	}
 	mod := l.State.Modules[p.Name]
 	if mod == nil {
-		return true, "", nil // already gone
+		return true, nil // already gone
 	}
 	if m := modules[p.Name]; m != nil && m.Busy(peer) {
-		return false, "", errRefsHeld
+		return false, errRefsHeld
 	}
 	wasConnected := mod.Status == Connected
 	delete(l.State.Modules, p.Name)
-	if !wasConnected {
-		return true, "", nil // never OnConnect'ed — no OnClose
+	if wasConnected {
+		if m := modules[p.Name]; m != nil {
+			m.OnClose(peer)
+		}
 	}
-	return true, p.Name, nil
+	return true, nil
 }
 
-// respModuleClose returns the module name when it was just removed,
-// so the caller can fire OnClose.
-func (l *Link) respModuleClose(payload json.RawMessage, ok bool) string {
+// respModuleClose handles a module.close response. It removes the module
+// from the link and fires OnClose if the module was connected.
+func (l *Link) respModuleClose(peer string, payload json.RawMessage, ok bool, modules map[string]Module) {
 	var p struct {
 		Name string `json:"name"`
 	}
 	if json.Unmarshal(payload, &p) != nil {
-		return ""
+		return
 	}
 	mod := l.State.Modules[p.Name]
 	if mod == nil {
-		return ""
+		return
 	}
 	if ok {
 		wasConnected := mod.Status == Connected
 		delete(l.State.Modules, p.Name)
-		if !wasConnected {
-			return "" // never OnConnect'ed — no OnClose
+		if wasConnected {
+			if m := modules[p.Name]; m != nil {
+				m.OnClose(peer)
+			}
 		}
-		return p.Name
+		return
 	}
 	mod.IntentClose = false
-	return ""
 }
 
 // ---------------------------------------------------------------------------
