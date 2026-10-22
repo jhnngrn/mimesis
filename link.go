@@ -1096,7 +1096,6 @@ func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
 	}
 
 	now := nowSecs()
-	pbApplied := false
 
 	// Piggybacked response.
 	if env.Resp != nil && lk.Pending != nil && env.Counter == lk.Counter+1 {
@@ -1110,7 +1109,6 @@ func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
 			n.kick(k)
 		}
 		n.kick(env.From)
-		pbApplied = true
 	}
 
 	// Validate counter and collision.
@@ -1141,9 +1139,7 @@ func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
 
 	resp := lk.AcceptRequest(env.Counter, ok, ts)
 	n.commit()
-	if !pbApplied {
-		n.kick(env.From)
-	}
+	n.kick(env.From)
 	for _, k := range dispatchKicks {
 		n.kick(k)
 	}
