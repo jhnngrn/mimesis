@@ -1291,6 +1291,10 @@ func (n *Node) sendPending(peer string) {
 	body, err := n.send(peer, env)
 
 	n.mu.Lock()
+	if n.stopped {
+		n.mu.Unlock()
+		return
+	}
 	if err != nil {
 		log.Printf("[link] %s->%s %s: %v", n.ID, peer, msg.Method, err)
 		n.setRetry(peer, counter)
