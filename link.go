@@ -470,16 +470,16 @@ func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage,
 			if l.State.Status == Connected {
 				return false, nil, fmt.Errorf("link already connected")
 			}
-			// Root mismatch — NACK without removing the link. The
-			// sender goes to waiting; force_remove is the way out.
-			if l.State.Root != "" && l.State.Root != p.Name {
+			if l.State.Status == Incoming {
+				return false, nil, fmt.Errorf("link already incoming")
+			}
+			// Root mismatch — NACK. The sender goes to waiting;
+			// force_remove is the way out.
+			if l.State.Root != p.Name {
 				return false, nil, nil
 			}
-			if l.State.Root == "" {
-				l.State.Root = p.Name
-			}
-			if l.State.Status == waiting {
-				// Peer's accept-connect confirms the link.
+			// Accept: peer was waiting (mutual add), or we're open.
+			if l.State.Status == waiting || n.InviteMode == inviteModeOpen {
 				l.State.Status = Connected
 				l.State.IntentConnect = false
 				if mod := n.moduleMap[l.State.Root]; mod != nil {
@@ -487,14 +487,9 @@ func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage,
 				}
 				return true, nil, nil
 			}
-			// Status is Incoming or "" — ACK, stay/go Incoming.
-			if l.State.Status != Incoming {
-				l.State.Status = Incoming
-			}
-			if n.InviteMode == inviteModeOpen && !l.State.IntentConnect {
-				l.State.IntentConnect = true
-			}
-			return true, nil, nil
+			// Invite mode — received, not yet accepted. NACK.
+			l.State.Status = Incoming
+			return false, nil, nil
 		case "close":
 			if n.anyBusy(peer) {
 				return false, nil, errRefsHeld
@@ -556,17 +551,12 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 		switch method {
 		case "connect":
 			if ok {
-				if l.State.Status == Incoming {
-					// Our accept-connect was ACKed — fully connected.
-					l.State.Status = Connected
-					if mod := n.moduleMap[l.State.Root]; mod != nil {
-						mod.OnConnect(peer)
-					}
-				} else {
-					// First connect ACKed — wait for peer to accept.
-					l.State.Status = waiting
-				}
+				// ACK — peer accepted. Both sides connected.
+				l.State.Status = Connected
 				l.State.IntentConnect = false
+				if mod := n.moduleMap[l.State.Root]; mod != nil {
+					mod.OnConnect(peer)
+				}
 			} else {
 				// NACK — go to waiting. The link stays with its
 				// counter intact; force_remove is the way out.
@@ -1143,7 +1133,6 @@ func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
 		}
 		lk = newLink(n.ID, env.From)
 		lk.State.Root = p.Name
-		lk.State.Status = Incoming
 		n.Links[env.From] = lk
 	}
 
