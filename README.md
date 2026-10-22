@@ -127,6 +127,10 @@ modules. `OnClose` is called when a module is disconnected — on
 use these to create and clean up per-peer state. Modules that don't need
 lifecycle hooks provide empty implementations.
 
+The `[]string` return value (routes) lists peers to whom the handler
+routed an outgoing transaction. Routing is committed atomically with the
+originating transaction.
+
 ### Node
 
 The `*Node` received by the module factory:
