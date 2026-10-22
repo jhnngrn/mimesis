@@ -42,8 +42,9 @@ import (
 
 type myModule struct{ /* ... */ }
 
-func (m *myModule) OnConnect(peer string) {}
-func (m *myModule) OnClose(peer string)   {}
+func (m *myModule) OnConnect(peer string)   {}
+func (m *myModule) OnClose(peer string)     {}
+func (m *myModule) ForceRemove(peer string) {}
 func (m *myModule) HandleRequest(peer, method string, payload json.RawMessage, ts int64) (bool, []string, error) {
     // handle incoming sync
     return true, nil, nil
@@ -116,6 +117,7 @@ type Module interface {
     NextTx(peer string) (string, json.RawMessage, int64)
     Status() json.RawMessage
     Busy(peer string) bool
+    ForceRemove(peer string)
 }
 ```
 
@@ -131,12 +133,17 @@ The `[]string` return value (routes) lists peers to whom the handler
 routed an outgoing transaction. Routing is committed atomically with the
 originating transaction.
 
+`ForceRemove` is called when a link is unilaterally removed without
+bilateral consensus. The module must clean up state that would normally
+be garbage collected through the bilateral close cycle.
+
 ### Node
 
 The `*Node` received by the module factory:
 
 - `node.Get(peer) *Link` — get an existing link
 - `node.Connect(peer, root) (*Link, error)` — create an outgoing link running the named root module
+- `node.ForceRemove(peer)` — unilaterally remove a link without bilateral consensus
 - `node.ModuleMap() map[string]Module` — access other module instances
 - `node.ModuleAvailable(peer, module) bool` — true if module is bilaterally connected and not closing
 

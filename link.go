@@ -83,6 +83,7 @@ type Module interface {
 	NextTx(peer string) (string, json.RawMessage, int64)
 	Status() json.RawMessage
 	Busy(peer string) bool
+	ForceRemove(peer string)
 }
 
 // queuedMsg is a message queued for sending on a link.
@@ -283,6 +284,31 @@ func (n *Node) ModuleAvailable(peer, module string) bool {
 func (n *Node) len() int              { return len(n.Links) }
 func (n *Node) full() bool            { return len(n.Links) >= maxLinks }
 func (n *Node) delete(peer string)    { delete(n.Links, peer) }
+
+// ForceRemove unilaterally removes a link without bilateral consensus.
+// Unlike Close, which goes through the normal req/resp close handshake,
+// ForceRemove deletes the link immediately. Each module's ForceRemove
+// is called to clean up state that would normally be garbage collected
+// through the bilateral close cycle.
+// Must be called under the node lock (from a handler or schedule callback).
+func (n *Node) ForceRemove(peer string) {
+	lk := n.Get(peer)
+	if lk == nil {
+		return
+	}
+	for name := range lk.State.Modules {
+		if mod := n.moduleMap[name]; mod != nil {
+			mod.ForceRemove(peer)
+		}
+	}
+	if mod := n.moduleMap[lk.State.Root]; mod != nil {
+		mod.ForceRemove(peer)
+	}
+	if lk.Sending != nil && lk.Sending.Timer != nil {
+		lk.Sending.Timer.Stop()
+	}
+	n.delete(peer)
+}
 
 // Connect creates a new outgoing link to peer running the named root module.
 // The link is created with IntentConnect set, so the sync loop
