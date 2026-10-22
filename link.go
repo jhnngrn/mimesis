@@ -66,9 +66,9 @@ type LinkState struct {
 }
 
 // Module processes sync methods and account API calls for a namespace.
-// HandleRequest returns (ok, kicks, err) where kicks is a list of peers
+// HandleRequest returns (ok, routes, err) where routes is a list of peers
 // that need kicking on other links (cross-link side effects).
-// HandleResponse returns kicks for the same purpose.
+// HandleResponse returns routes for the same purpose.
 // HandleAccount handles user-facing API calls.
 // NextTx returns the next queued message to send on a peer.
 // Returns (method, payload, queuedAt). Empty method means nothing to send.
@@ -439,7 +439,7 @@ func olderQueuedMsg(a, b *queuedMsg) bool {
 
 // dispatchRequest dispatches an incoming sync request by namespace.
 // Link-level methods are handled inline; registered modules are
-// dispatched by name. Returns (ok, kicks, error).
+// dispatched by name. Returns (ok, routes, error).
 func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage, ts int64) (bool, []string, error) {
 	ns, method := splitMethod(fullMethod)
 	if ns == "link" {
@@ -927,9 +927,7 @@ func (n *Node) handleAccount(fullMethod string, payload json.RawMessage) (json.R
 		if mod == nil {
 			return nil, fmt.Errorf("unknown method %q", fullMethod)
 		}
-		var modKicks []string
-		result, modKicks, err = mod.HandleAccount(method, payload)
-		kicks = append(kicks, modKicks...)
+		result, kicks, err = mod.HandleAccount(method, payload)
 	}
 
 	if err == nil {
@@ -1102,11 +1100,11 @@ func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
 		if err := lk.ValidateTimestamp(env.Resp.Timestamp, now); err != nil {
 			return nil, err
 		}
-		pbKicks := n.dispatchResponse(env.From, lk.Pending.Method, lk.Pending.Payload, env.Resp.OK, env.Resp.Timestamp)
+		pbRoutes := n.dispatchResponse(env.From, lk.Pending.Method, lk.Pending.Payload, env.Resp.OK, env.Resp.Timestamp)
 		lk.AcceptResponse(env.Resp.Timestamp)
 		n.commit()
-		for _, k := range pbKicks {
-			n.kick(k)
+		for _, r := range pbRoutes {
+			n.kick(r)
 		}
 		n.kick(env.From)
 	}
@@ -1132,7 +1130,7 @@ func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
 	}
 
 	// Dispatch to handler.
-	ok, dispatchKicks, reqErr := n.dispatchRequest(env.From, env.Method, env.Payload, ts)
+	ok, routes, reqErr := n.dispatchRequest(env.From, env.Method, env.Payload, ts)
 	if reqErr != nil {
 		return nil, reqErr
 	}
@@ -1140,8 +1138,8 @@ func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
 	resp := lk.AcceptRequest(env.Counter, ok, ts)
 	n.commit()
 	n.kick(env.From)
-	for _, k := range dispatchKicks {
-		n.kick(k)
+	for _, r := range routes {
+		n.kick(r)
 	}
 	return resp, nil
 }
@@ -1167,8 +1165,8 @@ func (n *Node) kickAll() {
 }
 
 // Schedule runs fn after delay under the Node mutex.
-// fn returns a list of peers to kick. Node commits and kicks under
-// the lock to guarantee kicks are never lost.
+// fn returns a list of peers to route to. Node commits and dispatches
+// under the lock to guarantee routes are never lost.
 // The timer is tracked so Stop() can cancel it.
 //
 // Schedule is called from two contexts: during init (no mutex held)
@@ -1183,10 +1181,10 @@ func (n *Node) schedule(delay time.Duration, fn func() []string) {
 		if n.stopped {
 			return
 		}
-		kicks := fn()
+		routes := fn()
 		n.commit()
-		for _, k := range kicks {
-			n.kick(k)
+		for _, r := range routes {
+			n.kick(r)
 		}
 	})
 	// No mutex lock here — called under mutex (callback) or during
@@ -1293,7 +1291,7 @@ func (n *Node) sendPending(peer string) {
 		return
 	}
 
-	extraKicks := n.dispatchResponse(peer, msg.Method, msg.Payload, resp.OK, resp.Timestamp)
+	routes := n.dispatchResponse(peer, msg.Method, msg.Payload, resp.OK, resp.Timestamp)
 	lk.AcceptResponse(resp.Timestamp)
 
 	var kickPeer bool
@@ -1303,8 +1301,8 @@ func (n *Node) sendPending(peer string) {
 	}
 	n.commit()
 	lk.Sending = nil
-	for _, k := range extraKicks {
-		n.kick(k)
+	for _, r := range routes {
+		n.kick(r)
 	}
 	if kickPeer {
 		n.kick(peer)
