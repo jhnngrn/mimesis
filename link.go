@@ -795,14 +795,6 @@ func (l *Link) respModuleClose(payload json.RawMessage, ok bool) string {
 // HandleAccount dispatches an account API call by namespace.
 // Handles locking, commit, and kicks internally — like HandleIncoming.
 func (n *Node) handleAccount(fullMethod string, payload json.RawMessage) (json.RawMessage, error) {
-	result, kicks, err := n.handleAccountLocked(fullMethod, payload)
-	for _, k := range kicks {
-		n.kick(k)
-	}
-	return result, err
-}
-
-func (n *Node) handleAccountLocked(fullMethod string, payload json.RawMessage) (json.RawMessage, []string, error) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
@@ -818,12 +810,12 @@ func (n *Node) handleAccountLocked(fullMethod string, payload json.RawMessage) (
 			Mode inviteMode `json:"mode"`
 		}
 		if err = json.Unmarshal(payload, &p); err != nil {
-			return nil, nil, fmt.Errorf("bad request")
+			return nil, fmt.Errorf("bad request")
 		}
 		switch p.Mode {
 		case inviteModeClosed, inviteModeInvite, inviteModeOpen:
 		default:
-			return nil, nil, fmt.Errorf("invalid mode %q", p.Mode)
+			return nil, fmt.Errorf("invalid mode %q", p.Mode)
 		}
 		n.InviteMode = p.Mode
 		result = enc("ok")
@@ -834,12 +826,12 @@ func (n *Node) handleAccountLocked(fullMethod string, payload json.RawMessage) (
 			Modules []string `json:"modules"`
 		}
 		if err = json.Unmarshal(payload, &p); err != nil {
-			return nil, nil, fmt.Errorf("bad request")
+			return nil, fmt.Errorf("bad request")
 		}
 		p.Peer = strings.ToLower(p.Peer)
 		lk := n.Get(p.Peer)
 		if lk == nil {
-			return nil, nil, fmt.Errorf("no link to %s", p.Peer)
+			return nil, fmt.Errorf("no link to %s", p.Peer)
 		}
 		lk.setModules(p.Modules, n.moduleMap, n.roots)
 		result = enc("ok")
@@ -850,15 +842,15 @@ func (n *Node) handleAccountLocked(fullMethod string, payload json.RawMessage) (
 			Peer string `json:"peer"`
 		}
 		if err = json.Unmarshal(payload, &p); err != nil {
-			return nil, nil, fmt.Errorf("bad request")
+			return nil, fmt.Errorf("bad request")
 		}
 		p.Peer = strings.ToLower(p.Peer)
 		lk := n.Get(p.Peer)
 		if lk == nil {
-			return nil, nil, fmt.Errorf("no link to %s", p.Peer)
+			return nil, fmt.Errorf("no link to %s", p.Peer)
 		}
 		if lk.State.Status != Incoming {
-			return nil, nil, fmt.Errorf("link to %s is not incoming", p.Peer)
+			return nil, fmt.Errorf("link to %s is not incoming", p.Peer)
 		}
 		lk.State.IntentConnect = true
 		result = enc("ok")
@@ -869,15 +861,15 @@ func (n *Node) handleAccountLocked(fullMethod string, payload json.RawMessage) (
 			Peer string `json:"peer"`
 		}
 		if err = json.Unmarshal(payload, &p); err != nil {
-			return nil, nil, fmt.Errorf("bad request")
+			return nil, fmt.Errorf("bad request")
 		}
 		p.Peer = strings.ToLower(p.Peer)
 		lk := n.Get(p.Peer)
 		if lk == nil {
-			return nil, nil, fmt.Errorf("no link to %s", p.Peer)
+			return nil, fmt.Errorf("no link to %s", p.Peer)
 		}
 		if lk.State.Status != Incoming {
-			return nil, nil, fmt.Errorf("link to %s is not incoming", p.Peer)
+			return nil, fmt.Errorf("link to %s is not incoming", p.Peer)
 		}
 		lk.State.IntentClose = true
 		result = enc("ok")
@@ -889,15 +881,15 @@ func (n *Node) handleAccountLocked(fullMethod string, payload json.RawMessage) (
 			Module string `json:"module"`
 		}
 		if err = json.Unmarshal(payload, &p); err != nil {
-			return nil, nil, fmt.Errorf("bad request")
+			return nil, fmt.Errorf("bad request")
 		}
 		p.Peer = strings.ToLower(p.Peer)
 		lk := n.Get(p.Peer)
 		if lk == nil {
-			return nil, nil, fmt.Errorf("no link to %s", p.Peer)
+			return nil, fmt.Errorf("no link to %s", p.Peer)
 		}
 		if err = lk.AcceptModule(p.Module); err != nil {
-			return nil, nil, fmt.Errorf("no incoming module %s from %s", p.Module, p.Peer)
+			return nil, fmt.Errorf("no incoming module %s from %s", p.Module, p.Peer)
 		}
 		result = enc("ok")
 		kicks = []string{p.Peer}
@@ -908,15 +900,15 @@ func (n *Node) handleAccountLocked(fullMethod string, payload json.RawMessage) (
 			Module string `json:"module"`
 		}
 		if err = json.Unmarshal(payload, &p); err != nil {
-			return nil, nil, fmt.Errorf("bad request")
+			return nil, fmt.Errorf("bad request")
 		}
 		p.Peer = strings.ToLower(p.Peer)
 		lk := n.Get(p.Peer)
 		if lk == nil {
-			return nil, nil, fmt.Errorf("no link to %s", p.Peer)
+			return nil, fmt.Errorf("no link to %s", p.Peer)
 		}
 		if err = lk.RejectModule(p.Module); err != nil {
-			return nil, nil, fmt.Errorf("no incoming module %s from %s", p.Module, p.Peer)
+			return nil, fmt.Errorf("no incoming module %s from %s", p.Module, p.Peer)
 		}
 		result = enc("ok")
 		kicks = []string{p.Peer}
@@ -925,15 +917,15 @@ func (n *Node) handleAccountLocked(fullMethod string, payload json.RawMessage) (
 		result = n.status()
 
 	case ns == "link":
-		return nil, nil, fmt.Errorf("unknown link method %q", method)
+		return nil, fmt.Errorf("unknown link method %q", method)
 
 	case ns == "module":
-		return nil, nil, fmt.Errorf("unknown module method %q", method)
+		return nil, fmt.Errorf("unknown module method %q", method)
 
 	default:
 		mod := n.moduleMap[ns]
 		if mod == nil {
-			return nil, nil, fmt.Errorf("unknown method %q", fullMethod)
+			return nil, fmt.Errorf("unknown method %q", fullMethod)
 		}
 		var modKicks []string
 		result, modKicks, err = mod.HandleAccount(method, payload)
@@ -942,8 +934,11 @@ func (n *Node) handleAccountLocked(fullMethod string, payload json.RawMessage) (
 
 	if err == nil {
 		n.commit()
+		for _, k := range kicks {
+			n.kick(k)
+		}
 	}
-	return result, kicks, err
+	return result, err
 }
 
 // Status returns the link collection status as JSON, including module status.
@@ -1062,18 +1057,9 @@ func (n *Node) quickReject(from, method string) bool {
 
 // HandleIncoming processes an incoming transaction. The caller is responsible
 // for authentication (signature verification).
+// Kicks are dispatched under the lock to guarantee they are never lost on
+// error paths after a commit.
 func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
-	resp, kicks, err := n.handleIncomingLocked(env)
-	for _, k := range kicks {
-		n.kick(k)
-	}
-	if err != nil {
-		return nil, err
-	}
-	return resp, nil
-}
-
-func (n *Node) handleIncomingLocked(env txRequest) (*txResponse, []string, error) {
 	env.From = strings.ToLower(env.From)
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -1081,16 +1067,16 @@ func (n *Node) handleIncomingLocked(env txRequest) (*txResponse, []string, error
 	lk := n.Get(env.From)
 	if lk == nil {
 		if env.Method == "link.close" {
-			return &txResponse{OK: true, Timestamp: nowSecs()}, nil, nil
+			return &txResponse{OK: true, Timestamp: nowSecs()}, nil
 		}
 		if env.Method != "link.connect" {
-			return nil, nil, errNoLink
+			return nil, errNoLink
 		}
 		if n.InviteMode == inviteModeClosed {
-			return nil, nil, errInvitesDisabled
+			return nil, errInvitesDisabled
 		}
 		if n.full() {
-			return nil, nil, errMaxLinks
+			return nil, errMaxLinks
 		}
 		// Validate root module name before creating any state, so a rejected
 		// link.connect never leaves a phantom link in n.Links.
@@ -1101,7 +1087,7 @@ func (n *Node) handleIncomingLocked(env txRequest) (*txResponse, []string, error
 			json.Unmarshal(env.Payload, &p)
 		}
 		if p.Name == "" || !n.isRoot(p.Name) {
-			return nil, nil, fmt.Errorf("unknown root module %q", p.Name)
+			return nil, fmt.Errorf("unknown root module %q", p.Name)
 		}
 		lk = newLink(n.ID, env.From)
 		lk.State.Root = p.Name
@@ -1110,25 +1096,26 @@ func (n *Node) handleIncomingLocked(env txRequest) (*txResponse, []string, error
 	}
 
 	now := nowSecs()
-	var kicks []string
 
 	// Piggybacked response.
 	if env.Resp != nil && lk.Pending != nil && env.Counter == lk.Counter+1 {
 		if err := lk.ValidateTimestamp(env.Resp.Timestamp, now); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		pbKicks := n.dispatchResponse(env.From, lk.Pending.Method, lk.Pending.Payload, env.Resp.OK, env.Resp.Timestamp)
 		lk.AcceptResponse(env.Resp.Timestamp)
 		n.commit()
-		kicks = append(kicks, pbKicks...)
-		kicks = append(kicks, env.From)
+		for _, k := range pbKicks {
+			n.kick(k)
+		}
+		n.kick(env.From)
 	}
 
 	// Validate counter and collision.
 	if cached, err := lk.ValidateRequest(env.Counter); err != nil {
-		return nil, kicks, err
+		return nil, err
 	} else if cached != nil {
-		return cached, kicks, nil
+		return cached, nil
 	}
 
 	ts := env.Timestamp
@@ -1141,20 +1128,22 @@ func (n *Node) handleIncomingLocked(env txRequest) (*txResponse, []string, error
 
 	// Validate peer timestamp (monotonicity + forward cap).
 	if err := lk.ValidateTimestamp(ts, now); err != nil {
-		return nil, kicks, err
+		return nil, err
 	}
 
 	// Dispatch to handler.
 	ok, dispatchKicks, reqErr := n.dispatchRequest(env.From, env.Method, env.Payload, ts)
 	if reqErr != nil {
-		return nil, kicks, reqErr
+		return nil, reqErr
 	}
 
 	resp := lk.AcceptRequest(env.Counter, ok, ts)
 	n.commit()
-	kicks = append(kicks, env.From)
-	kicks = append(kicks, dispatchKicks...)
-	return resp, kicks, nil
+	n.kick(env.From)
+	for _, k := range dispatchKicks {
+		n.kick(k)
+	}
+	return resp, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -1178,7 +1167,8 @@ func (n *Node) kickAll() {
 }
 
 // Schedule runs fn after delay under the Node mutex.
-// fn returns a list of peers to kick. Node commits and kicks.
+// fn returns a list of peers to kick. Node commits and kicks under
+// the lock to guarantee kicks are never lost.
 // The timer is tracked so Stop() can cancel it.
 //
 // Schedule is called from two contexts: during init (no mutex held)
@@ -1195,10 +1185,10 @@ func (n *Node) schedule(delay time.Duration, fn func() []string) {
 		}
 		kicks := fn()
 		n.commit()
-		n.mu.Unlock()
 		for _, k := range kicks {
 			n.kick(k)
 		}
+		n.mu.Unlock()
 	})
 	// No mutex lock here — called under mutex (callback) or during
 	// init (no concurrency). Locking would deadlock in the callback case.
@@ -1314,13 +1304,13 @@ func (n *Node) sendPending(peer string) {
 	}
 	n.commit()
 	lk.Sending = nil
-	n.mu.Unlock()
-	if kickPeer {
-		n.kick(peer)
-	}
 	for _, k := range extraKicks {
 		n.kick(k)
 	}
+	if kickPeer {
+		n.kick(peer)
+	}
+	n.mu.Unlock()
 }
 
 // setRetry sets a per-peer retry timer. Caller must hold Lock.
