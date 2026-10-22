@@ -1064,11 +1064,11 @@ func (n *Node) quickReject(from, method string) bool {
 // for authentication (signature verification).
 func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
 	resp, kicks, err := n.handleIncomingLocked(env)
-	if err != nil {
-		return nil, err
-	}
 	for _, k := range kicks {
 		n.kick(k)
+	}
+	if err != nil {
+		return nil, err
 	}
 	return resp, nil
 }
@@ -1113,7 +1113,7 @@ func (n *Node) handleIncomingLocked(env txRequest) (*txResponse, []string, error
 	var kicks []string
 
 	// Piggybacked response.
-	if env.Resp != nil && lk.Pending != nil {
+	if env.Resp != nil && lk.Pending != nil && env.Counter == lk.Counter+1 {
 		if err := lk.ValidateTimestamp(env.Resp.Timestamp, now); err != nil {
 			return nil, nil, err
 		}
