@@ -470,10 +470,9 @@ func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage,
 			if l.State.Status == Connected {
 				return false, nil, fmt.Errorf("link already connected")
 			}
-			// Root mismatch is a definitive NACK — remove the link
-			// so both sides reset to counter 0.
+			// Root mismatch — NACK without removing the link. The
+			// sender goes to waiting; force_remove is the way out.
 			if l.State.Root != "" && l.State.Root != p.Name {
-				delete(n.Links, peer)
 				return false, nil, nil
 			}
 			if l.State.Root == "" {
@@ -569,8 +568,10 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 				}
 				l.State.IntentConnect = false
 			} else {
-				// NACK — definitive rejection, remove the link.
-				delete(n.Links, peer)
+				// NACK — go to waiting. The link stays with its
+				// counter intact; force_remove is the way out.
+				l.State.Status = waiting
+				l.State.IntentConnect = false
 			}
 		case "close":
 			if ok {
@@ -1124,7 +1125,7 @@ func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
 			return nil, errNoLink
 		}
 		if n.InviteMode == inviteModeClosed {
-			return nil, errInvitesDisabled
+			return &txResponse{OK: false, Timestamp: nowSecs()}, nil
 		}
 		if n.full() {
 			return nil, errMaxLinks
