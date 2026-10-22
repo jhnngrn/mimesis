@@ -177,6 +177,7 @@ Built-in account API commands handled by mimesis directly:
 - `link.reject {peer}` — reject an incoming link
 - `link.set_modules {peer, modules}` — propose modules on a link
 - `link.set_invite_mode {mode}` — set invite mode (open/invite/closed)
+- `link.force_remove {peer}` — unilaterally remove a link
 
 **module.\*** — module-level:
 - `module.accept {peer, module}` — accept an incoming module proposal

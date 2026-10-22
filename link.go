@@ -293,13 +293,6 @@ func (n *Node) len() int              { return len(n.Links) }
 func (n *Node) full() bool            { return len(n.Links) >= maxLinks }
 func (n *Node) delete(peer string)    { delete(n.Links, peer) }
 
-// ForceRemove unilaterally removes a link without bilateral consensus.
-// Unlike Close, which goes through the normal req/resp close handshake,
-// ForceRemove deletes the link immediately. Each module's ForceRemove
-// is called to clean up state that would normally be garbage collected
-// through the bilateral close cycle.
-// Must be called under the node lock (from a handler or schedule callback).
-
 // Connect creates a new outgoing link to peer running the named root module.
 // The link is created with IntentConnect set, so the sync loop
 // will initiate a connection. Returns errMaxLinks if at capacity.
