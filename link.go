@@ -634,8 +634,8 @@ func (n *Node) nextTx(peer string) *queuedMsg {
 	if lk == nil {
 		return nil
 	}
-	// Cancel: both intents set before any message sent — they annihilate.
-	if lk.State.IntentClose && lk.State.IntentConnect {
+	// Cancel opposing intents on established links.
+	if lk.State.IntentClose && lk.State.IntentConnect && lk.State.Status != "" {
 		lk.State.IntentClose = false
 		lk.State.IntentConnect = false
 	}
@@ -646,15 +646,14 @@ func (n *Node) nextTx(peer string) *queuedMsg {
 		return &queuedMsg{Method: "link.connect", Payload: enc(map[string]string{"name": lk.State.Root})}
 	}
 	if lk.State.Status == Connected {
-		// Cancel annihilating intents.
+		// Module close/connect — root lifecycle is at link level.
+		// Close modules first, then connect.
 		for _, mod := range lk.State.Modules {
-			if mod.IntentClose && mod.IntentConnect {
+			if mod.IntentClose && mod.IntentConnect && mod.Status != "" {
 				mod.IntentClose = false
 				mod.IntentConnect = false
 			}
 		}
-		// Module close/connect — root lifecycle is at link level.
-		// Close modules first, then connect.
 		for name, mod := range lk.State.Modules {
 			if mod.IntentClose && !n.moduleBusy(name, peer) {
 				return &queuedMsg{
