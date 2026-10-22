@@ -143,7 +143,6 @@ The `*Node` received by the module factory:
 
 - `node.Get(peer) *Link` — get an existing link
 - `node.Connect(peer, root) (*Link, error)` — create an outgoing link running the named root module
-- `node.ForceRemove(peer)` — unilaterally remove a link without bilateral consensus
 - `node.ModuleMap() map[string]Module` — access other module instances
 - `node.ModuleAvailable(peer, module) bool` — true if module is bilaterally connected and not closing
 

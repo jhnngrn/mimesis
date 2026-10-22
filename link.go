@@ -299,24 +299,6 @@ func (n *Node) delete(peer string)    { delete(n.Links, peer) }
 // is called to clean up state that would normally be garbage collected
 // through the bilateral close cycle.
 // Must be called under the node lock (from a handler or schedule callback).
-func (n *Node) ForceRemove(peer string) {
-	lk := n.Get(peer)
-	if lk == nil {
-		return
-	}
-	for name := range lk.State.Modules {
-		if mod := n.moduleMap[name]; mod != nil {
-			mod.ForceRemove(peer)
-		}
-	}
-	if mod := n.moduleMap[lk.State.Root]; mod != nil {
-		mod.ForceRemove(peer)
-	}
-	if lk.Sending != nil && lk.Sending.Timer != nil {
-		lk.Sending.Timer.Stop()
-	}
-	n.delete(peer)
-}
 
 // Connect creates a new outgoing link to peer running the named root module.
 // The link is created with IntentConnect set, so the sync loop
@@ -902,6 +884,33 @@ func (n *Node) handleAccount(fullMethod string, payload json.RawMessage) (json.R
 			return nil, fmt.Errorf("link to %s is not incoming", p.Peer)
 		}
 		lk.State.IntentConnect = true
+		result = enc("ok")
+		kicks = []string{p.Peer}
+
+	case ns == "link" && method == "force_remove":
+		var p struct {
+			Peer string `json:"peer"`
+		}
+		if err = json.Unmarshal(payload, &p); err != nil {
+			return nil, fmt.Errorf("bad request")
+		}
+		p.Peer = strings.ToLower(p.Peer)
+		lk := n.Get(p.Peer)
+		if lk == nil {
+			return nil, fmt.Errorf("no link to %s", p.Peer)
+		}
+		for name := range lk.State.Modules {
+			if mod := n.moduleMap[name]; mod != nil {
+				mod.ForceRemove(p.Peer)
+			}
+		}
+		if mod := n.moduleMap[lk.State.Root]; mod != nil {
+			mod.ForceRemove(p.Peer)
+		}
+		if lk.Sending != nil && lk.Sending.Timer != nil {
+			lk.Sending.Timer.Stop()
+		}
+		n.delete(p.Peer)
 		result = enc("ok")
 		kicks = []string{p.Peer}
 
