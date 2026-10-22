@@ -268,8 +268,16 @@ func (n *Node) rootFor(module string) string {
 // ModuleMap returns the registered modules for serialization.
 func (n *Node) ModuleMap() map[string]Module { return n.moduleMap }
 
-// Roots returns the root→children map so callers can pass it to ConnectModules.
-func (n *Node) Roots() map[string][]string { return n.roots }
+// ConnectModules requests connection for the named child modules on the
+// peer's link, filtering by registered modules and root declarations.
+// Existing modules are left untouched.
+func (n *Node) ConnectModules(peer string, modules []string) {
+	lk := n.Links[peer]
+	if lk == nil {
+		return
+	}
+	lk.connectModules(modules, n.moduleMap, n.roots)
+}
 
 func (n *Node) Get(peer string) *Link { return n.Links[peer] }
 
@@ -987,9 +995,9 @@ func (n *Node) status() json.RawMessage {
 	return enc(result)
 }
 
-// ConnectModules requests connection for the named modules on this link,
+// connectModules requests connection for the named modules on this link,
 // filtering by registered modules. Existing modules are left untouched.
-func (l *Link) ConnectModules(modules []string, registered map[string]Module, roots map[string][]string) {
+func (l *Link) connectModules(modules []string, registered map[string]Module, roots map[string][]string) {
 	if l.State.Modules == nil {
 		l.State.Modules = map[string]*ConnectionState{}
 	}

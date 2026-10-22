@@ -44,7 +44,6 @@ type myModule struct{ /* ... */ }
 
 func (m *myModule) OnConnect(peer string)   {}
 func (m *myModule) OnClose(peer string)     {}
-func (m *myModule) ForceRemove(peer string) {}
 func (m *myModule) HandleRequest(peer, method string, payload json.RawMessage, ts int64) (bool, []string, error) {
     // handle incoming sync
     return true, nil, nil
@@ -64,6 +63,7 @@ func (m *myModule) Status() json.RawMessage {
 func (m *myModule) Busy(peer string) bool {
     return false
 }
+func (m *myModule) ForceRemove(peer string) {}
 
 func main() {
     srv, err := mimesis.Boot()
@@ -166,7 +166,7 @@ Methods available on a `*Link`:
 
 - `lk.Close()` — mark the link for closing (deferred until no module is Busy)
 - `lk.Closing() bool` — true if the link is closing
-- `lk.ConnectModules(modules, registered, roots)` — request connection for child modules (additive)
+- `node.ConnectModules(peer, modules)` — request connection for child modules on a link (additive)
 
 
 ### Account commands
