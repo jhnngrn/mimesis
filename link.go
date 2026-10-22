@@ -495,14 +495,15 @@ func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage,
 			if l.State.Status == Connected {
 				return false, nil, fmt.Errorf("link already connected")
 			}
-			if l.State.IntentConnect || l.State.Status == waiting {
-				// Both sides must agree on the root module.
-				if l.State.Root != "" && l.State.Root != p.Name {
-					return false, nil, nil
-				}
-				if l.State.Root == "" {
-					l.State.Root = p.Name
-				}
+			// Root mismatch is a definitive NACK.
+			if l.State.Root != "" && l.State.Root != p.Name {
+				return false, nil, nil
+			}
+			if l.State.Root == "" {
+				l.State.Root = p.Name
+			}
+			if l.State.Status == waiting {
+				// Peer's accept-connect confirms the link.
 				l.State.Status = Connected
 				l.State.IntentConnect = false
 				if mod := n.moduleMap[l.State.Root]; mod != nil {
@@ -510,15 +511,14 @@ func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage,
 				}
 				return true, nil, nil
 			}
-			if n.InviteMode == inviteModeOpen {
-				l.State.Root = p.Name
-				l.State.Status = Connected
-				if mod := n.moduleMap[p.Name]; mod != nil {
-					mod.OnConnect(peer)
-				}
-				return true, nil, nil
+			// Status is Incoming or "" — ACK, stay/go Incoming.
+			if l.State.Status != Incoming {
+				l.State.Status = Incoming
 			}
-			return false, nil, nil
+			if n.InviteMode == inviteModeOpen && !l.State.IntentConnect {
+				l.State.IntentConnect = true
+			}
+			return true, nil, nil
 		case "close":
 			if n.anyBusy(peer) {
 				return false, nil, errRefsHeld
@@ -585,12 +585,19 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 		switch method {
 		case "connect":
 			if ok {
-				l.State.Status = Connected
-				if mod := n.moduleMap[l.State.Root]; mod != nil {
-					mod.OnConnect(peer)
+				if l.State.Status == Incoming {
+					// Our accept-connect was ACKed — fully connected.
+					l.State.Status = Connected
+					if mod := n.moduleMap[l.State.Root]; mod != nil {
+						mod.OnConnect(peer)
+					}
+				} else {
+					// First connect ACKed — wait for peer to accept.
+					l.State.Status = waiting
 				}
 			} else {
-				l.State.Status = waiting
+				// NACK — definitive rejection, remove the link.
+				delete(n.Links, peer)
 			}
 			l.State.IntentConnect = false
 		case "close":
