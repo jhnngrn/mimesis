@@ -66,7 +66,7 @@ func main() {
     if err != nil {
         panic(err)
     }
-    srv.Register("myapp", func(name, nodeID string, node *mimesis.Node, schedule mimesis.ScheduleFunc, send mimesis.SendFunc, deleteQueue mimesis.DeleteQueueFunc, state json.RawMessage) mimesis.Module {
+    srv.Register("myapp", func(name, nodeID string, node *mimesis.Node, api mimesis.ModuleAPI, state json.RawMessage) mimesis.Module {
         return &myModule{}
     })
     srv.Register("helper", newHelper)
@@ -125,9 +125,10 @@ Only modules that received `OnConnect` will receive `OnClose`. Modules
 use these to create and clean up per-peer state. Modules that don't need
 lifecycle hooks provide empty implementations.
 
-Modules enqueue outgoing messages via the `SendFunc` provided by the
-framework. The framework manages the outbox and automatically kicks the
-peer for delivery when a message is enqueued.
+Modules enqueue outgoing messages via `ModuleAPI.Send`. The framework
+manages the outbox and automatically kicks the peer for delivery when a
+message is enqueued. `ModuleAPI` also provides `DeleteQueue`, `QueueHas`,
+`QueueExists`, and `Schedule`.
 
 `ForceRemove` is called when a link is unilaterally removed without
 bilateral consensus. The module must clean up state that would normally

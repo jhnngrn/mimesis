@@ -99,6 +99,19 @@ type SendFunc func(peer, queueID, method string, payload json.RawMessage)
 // novation removal, loop clearing).
 type DeleteQueueFunc func(peer, queueID string)
 
+// QueueExistsFunc reports whether any peer has an outbox entry for the
+// given queueID. The module name is captured in the closure.
+type QueueExistsFunc func(queueID string) bool
+
+// ModuleAPI groups the framework callbacks available to a module.
+type ModuleAPI struct {
+	Schedule    ScheduleFunc
+	Send        SendFunc
+	DeleteQueue DeleteQueueFunc
+	QueueHas    func(peer, queueID string) bool
+	QueueExists QueueExistsFunc
+}
+
 // outboxSend enqueues an outgoing message in the framework-managed outbox.
 // Called by the per-module SendFunc closure created in Server.newNode.
 func (n *Node) outboxSend(modName, peer, queueID, method string, payload json.RawMessage) {
