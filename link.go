@@ -179,6 +179,19 @@ func (n *Node) OutboxHas(peer, module, queueID string) bool {
 	return false
 }
 
+// QueueExists reports whether any peer has an outbox entry for the given
+// module and queueID.
+func (n *Node) QueueExists(module, queueID string) bool {
+	for _, byMod := range n.Outbox {
+		if byQueue := byMod[module]; byQueue != nil {
+			if len(byQueue[queueID]) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // OutboxHasModule reports whether the outbox contains any entry for the
 // given peer and module, regardless of queueID.
 func (n *Node) OutboxHasModule(peer, module string) bool {
