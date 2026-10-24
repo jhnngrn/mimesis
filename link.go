@@ -70,20 +70,76 @@ type LinkState struct {
 // that need kicking on other links (cross-link side effects).
 // HandleResponse returns routes for the same purpose.
 // HandleAccount handles user-facing API calls.
-// NextTx returns the next queued message to send on a peer.
-// Returns (method, payload, queuedAt). Empty method means nothing to send.
-// queuedAt is the unix-second timestamp of when the message was first queued;
-// when multiple modules return a candidate for the same peer, the oldest wins.
 type Module interface {
 	OnConnect(peer string)
 	OnClose(peer string)
 	HandleRequest(peer, method string, payload json.RawMessage, ts int64) (bool, []string, error)
 	HandleResponse(peer, method string, payload json.RawMessage, ok bool, ts int64) []string
 	HandleAccount(method string, payload json.RawMessage) (json.RawMessage, []string, error)
-	NextTx(peer string) (string, json.RawMessage, int64)
 	Status() json.RawMessage
 	Busy(peer string) bool
 	ForceRemove(peer string)
+}
+
+// OutboxEntry is a queued outgoing message managed by the framework.
+// Modules enqueue entries via SendFunc; the framework picks the oldest
+// entry across all modules for a peer and sends it as the next tx.
+type OutboxEntry struct {
+	Method  string          `json:"method"`
+	Payload json.RawMessage `json:"payload,omitempty"`
+	Time    int64           `json:"time"`
+}
+
+// SendFunc enqueues an outgoing message for a peer.
+// queueID is a module-chosen key (e.g. a novation ID) that identifies the
+// entry within the module's outbox for that peer.
+type SendFunc func(peer, queueID, method string, payload json.RawMessage)
+
+// DequeueFunc removes a previously enqueued message.
+// Used both when the exchange completes successfully and when it is cancelled.
+type DequeueFunc func(peer, queueID string)
+
+// outboxSend enqueues an outgoing message in the framework-managed outbox.
+// Called by the per-module SendFunc closure created in Server.newNode.
+func (n *Node) outboxSend(modName, peer, queueID, method string, payload json.RawMessage) {
+	if n.Outbox == nil {
+		n.Outbox = map[string]map[string]map[string]*OutboxEntry{}
+	}
+	byMod := n.Outbox[peer]
+	if byMod == nil {
+		byMod = map[string]map[string]*OutboxEntry{}
+		n.Outbox[peer] = byMod
+	}
+	byQueue := byMod[modName]
+	if byQueue == nil {
+		byQueue = map[string]*OutboxEntry{}
+		byMod[modName] = byQueue
+	}
+	byQueue[queueID] = &OutboxEntry{
+		Method:  method,
+		Payload: payload,
+		Time:    time.Now().Unix(),
+	}
+}
+
+// outboxDequeue removes an entry from the framework-managed outbox.
+// Called by the per-module DequeueFunc closure created in Server.newNode.
+func (n *Node) outboxDequeue(modName, peer, queueID string) {
+	byMod := n.Outbox[peer]
+	if byMod == nil {
+		return
+	}
+	byQueue := byMod[modName]
+	if byQueue == nil {
+		return
+	}
+	delete(byQueue, queueID)
+	if len(byQueue) == 0 {
+		delete(byMod, modName)
+	}
+	if len(byMod) == 0 {
+		delete(n.Outbox, peer)
+	}
 }
 
 // queuedMsg is a message queued for sending on a link.
@@ -220,6 +276,8 @@ type Node struct {
 	Links      map[string]*Link       `json:"links"`
 	InviteMode inviteMode             `json:"invite_mode,omitempty"`
 	Handlers   map[string]json.RawMessage `json:"handlers,omitempty"`
+	// Outbox holds queued outgoing messages: peer → module → queueID → entry.
+	Outbox     map[string]map[string]map[string]*OutboxEntry `json:"outbox,omitempty"`
 	roots      map[string][]string    `json:"-"` // root module name → child module names
 	moduleMap  map[string]Module      `json:"-"`
 	// send delivers a sync message to a peer and returns the response body.
@@ -656,16 +714,16 @@ func (n *Node) nextTx(peer string) *queuedMsg {
 		return nil
 	}
 	var best *queuedMsg
-	for name, mod := range n.moduleMap {
-		if !lk.moduleConnected(name) {
+	peerOutbox := n.Outbox[peer]
+	for modName, modEntries := range peerOutbox {
+		if !lk.moduleConnected(modName) {
 			continue
 		}
-		method, payload, queuedAt := mod.NextTx(peer)
-		if method != "" {
+		for _, entry := range modEntries {
 			msg := &queuedMsg{
-				Method:   name + "." + method,
-				Payload:  payload,
-				QueuedAt: queuedAt,
+				Method:   modName + "." + entry.Method,
+				Payload:  entry.Payload,
+				QueuedAt: entry.Time,
 			}
 			if olderQueuedMsg(msg, best) {
 				best = msg
@@ -893,6 +951,7 @@ func (n *Node) handleAccount(fullMethod string, payload json.RawMessage) (json.R
 		if mod := n.moduleMap[lk.State.Root]; mod != nil {
 			mod.ForceRemove(p.Peer)
 		}
+		delete(n.Outbox, p.Peer)
 		if lk.Sending != nil && lk.Sending.Timer != nil {
 			lk.Sending.Timer.Stop()
 		}
