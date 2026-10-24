@@ -44,18 +44,14 @@ type myModule struct{ /* ... */ }
 
 func (m *myModule) OnConnect(peer string)   {}
 func (m *myModule) OnClose(peer string)     {}
-func (m *myModule) HandleRequest(peer, method string, payload json.RawMessage, ts int64) (bool, []string, error) {
+func (m *myModule) HandleRequest(peer, method string, payload json.RawMessage, ts int64) (bool, error) {
     // handle incoming sync
-    return true, nil, nil
+    return true, nil
 }
-func (m *myModule) HandleResponse(peer, method string, payload json.RawMessage, ok bool, ts int64) []string {
-    return nil
+func (m *myModule) HandleResponse(peer, method string, payload json.RawMessage, ok bool, ts int64) {
 }
-func (m *myModule) HandleAccount(method string, payload json.RawMessage) (json.RawMessage, []string, error) {
-    return nil, nil, mimesis.ErrBadMethod
-}
-func (m *myModule) NextTx(peer string) (string, json.RawMessage, int64) {
-    return "", nil, 0
+func (m *myModule) HandleAccount(method string, payload json.RawMessage) (json.RawMessage, error) {
+    return nil, mimesis.ErrBadMethod
 }
 func (m *myModule) Status() json.RawMessage {
     return nil
@@ -70,7 +66,7 @@ func main() {
     if err != nil {
         panic(err)
     }
-    srv.Register("myapp", func(name, nodeID string, node *mimesis.Node, schedule mimesis.ScheduleFunc, state json.RawMessage) mimesis.Module {
+    srv.Register("myapp", func(name, nodeID string, node *mimesis.Node, schedule mimesis.ScheduleFunc, send mimesis.SendFunc, dequeue mimesis.DequeueFunc, state json.RawMessage) mimesis.Module {
         return &myModule{}
     })
     srv.Register("helper", newHelper)
@@ -111,10 +107,9 @@ go run . -domain myapp.example.com -port 3000
 type Module interface {
     OnConnect(peer string)
     OnClose(peer string)
-    HandleRequest(peer, method string, payload json.RawMessage, ts int64) (bool, []string, error)
-    HandleResponse(peer, method string, payload json.RawMessage, ok bool, ts int64) []string
-    HandleAccount(method string, payload json.RawMessage) (json.RawMessage, []string, error)
-    NextTx(peer string) (string, json.RawMessage, int64)
+    HandleRequest(peer, method string, payload json.RawMessage, ts int64) (bool, error)
+    HandleResponse(peer, method string, payload json.RawMessage, ok bool, ts int64)
+    HandleAccount(method string, payload json.RawMessage) (json.RawMessage, error)
     Status() json.RawMessage
     Busy(peer string) bool
     ForceRemove(peer string)
@@ -130,9 +125,9 @@ Only modules that received `OnConnect` will receive `OnClose`. Modules
 use these to create and clean up per-peer state. Modules that don't need
 lifecycle hooks provide empty implementations.
 
-The `[]string` return value (routes) lists peers to whom the handler
-routed an outgoing transaction. Routing is committed atomically with the
-originating transaction.
+Modules enqueue outgoing messages via the `SendFunc` provided by the
+framework. The framework manages the outbox and automatically kicks the
+peer for delivery when a message is enqueued.
 
 `ForceRemove` is called when a link is unilaterally removed without
 bilateral consensus. The module must clean up state that would normally
