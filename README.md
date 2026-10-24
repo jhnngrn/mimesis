@@ -66,7 +66,7 @@ func main() {
     if err != nil {
         panic(err)
     }
-    srv.Register("myapp", func(name, nodeID string, node *mimesis.Node, schedule mimesis.ScheduleFunc, send mimesis.SendFunc, cancel mimesis.CancelFunc, state json.RawMessage) mimesis.Module {
+    srv.Register("myapp", func(name, nodeID string, node *mimesis.Node, schedule mimesis.ScheduleFunc, send mimesis.SendFunc, deleteQueue mimesis.DeleteQueueFunc, state json.RawMessage) mimesis.Module {
         return &myModule{}
     })
     srv.Register("helper", newHelper)
