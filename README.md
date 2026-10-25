@@ -128,7 +128,7 @@ lifecycle hooks provide empty implementations.
 Modules enqueue outgoing messages via `ModuleAPI.Send`. The framework
 manages the outbox and automatically kicks the peer for delivery when a
 message is enqueued. `ModuleAPI` also provides `DeleteQueue`, `QueueHas`,
-`QueueExists`, and `Schedule`.
+`QueueExists`, `QueuePeers`, and `Schedule`.
 
 `ForceRemove` is called when a link is unilaterally removed without
 bilateral consensus. The module must clean up state that would normally
