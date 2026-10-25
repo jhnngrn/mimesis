@@ -44,6 +44,7 @@ type myModule struct{ /* ... */ }
 
 func (m *myModule) OnConnect(peer string)   {}
 func (m *myModule) OnClose(peer string)     {}
+func (m *myModule) ForceRemove(peer string) {}
 func (m *myModule) HandleRequest(peer, method string, payload json.RawMessage, ts int64) (bool, error) {
     // handle incoming sync
     return true, nil
@@ -59,10 +60,9 @@ func (m *myModule) Status() json.RawMessage {
 func (m *myModule) Busy(peer string) bool {
     return false
 }
-func (m *myModule) ForceRemove(peer string) {}
 
 func main() {
-    srv, err := mimesis.Boot()
+    srv, err := mimesis.Boot("myapp")
     if err != nil {
         panic(err)
     }
@@ -83,7 +83,7 @@ go run . -domain myapp.example.com -port 3000
 
 ### Server
 
-- `Boot()` — parse flags, create a server
+- `Boot(appName)` — parse flags, create a server (default data dir `/var/lib/<appName>`)
 - `NewServer(Config)` — create with explicit config
 - `srv.Register(name, factory)` — register a module factory
 - `srv.DeclareRoot(name, children)` — declare a module as a root module with optional child modules
@@ -140,6 +140,7 @@ The `*Node` received by the module factory:
 
 - `node.Get(peer) *Link` — get an existing link
 - `node.Connect(peer, root) (*Link, error)` — create an outgoing link running the named root module
+- `node.ForceRemove(peer)` — unilaterally remove a link without bilateral consensus
 - `node.ModuleMap() map[string]Module` — access other module instances
 - `node.ModuleAvailable(peer, module) bool` — true if module is bilaterally connected and not closing
 
