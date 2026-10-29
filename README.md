@@ -57,10 +57,6 @@ func (m *myModule) HandleAccount(method string, payload json.RawMessage) (json.R
 func (m *myModule) Status() json.RawMessage {
     return nil
 }
-func (m *myModule) Busy(peer string) bool {
-    return false
-}
-
 func main() {
     srv, err := mimesis.Boot("myapp")
     if err != nil {
@@ -111,7 +107,6 @@ type Module interface {
     HandleResponse(peer, method string, payload json.RawMessage, ok bool, ts int64)
     HandleAccount(method string, payload json.RawMessage) (json.RawMessage, error)
     Status() json.RawMessage
-    Busy(peer string) bool
     ForceRemove(peer string)
 }
 ```
@@ -125,10 +120,12 @@ Only modules that received `OnConnect` will receive `OnClose`. Modules
 use these to create and clean up per-peer state. Modules that don't need
 lifecycle hooks provide empty implementations.
 
-Modules enqueue outgoing messages via `ModuleAPI.Send`. The framework
-manages the outbox and automatically kicks the peer for delivery when a
-message is enqueued. `ModuleAPI` also provides `DeleteQueue`, `QueueHas`,
-`QueueExists`, `QueuePeers`, and `Schedule`.
+Modules create per-peer sync channels via `ModuleAPI.NewSyncObject(peer)`,
+which returns a `SyncObject` with `Send`, `HasPending`, and `Close`
+methods. The framework manages the outbox and automatically kicks the
+peer for delivery when a message is sent. `ModuleAPI` also provides
+`Reattach` (to reconnect a deserialized SyncObject's closures after
+restart) and `Schedule`.
 
 `ForceRemove` is called when a link is unilaterally removed without
 bilateral consensus. The module must clean up state that would normally
@@ -144,14 +141,25 @@ The `*Node` received by the module factory:
 - `node.ModuleMap() map[string]Module` — access other module instances
 - `node.ModuleAvailable(peer, module) bool` — true if module is bilaterally connected and not closing
 
-### Module lifecycle
+### SyncObject
 
-Modules implement `Busy(peer string) bool` to report whether they have
-active work with a peer. The sync loop checks `Busy` before sending
-`module.close` or `link.close`, deferring the close until the module is
-idle. Because `Busy` reads bilateral state that only changes through
-req/resp exchanges, the peer is always in the sync loop when the
-transition happens — no polling or timers needed.
+A `SyncObject` is a per-peer sync channel created by `ModuleAPI.NewSyncObject(peer)`.
+Each SyncObject has an ID, a peer, and methods to send messages, check for
+pending messages, and close the channel. Modules embed SyncObjects in their
+per-peer state and serialize them — on restart, `ModuleAPI.Reattach` reconnects
+the closures.
+
+The framework tracks a `RefCount` on each module's `ConnectionState` —
+incremented when a SyncObject is created, decremented when it is closed.
+The sync loop defers `module.close` and `link.close` until RefCount reaches
+zero, so modules don't need to implement busy-checking themselves.
+
+### Graceful shutdown
+
+When a link is closing, child modules are closed individually before the
+link itself. Each child waits for its own RefCount to reach zero, then
+`module.close` is sent. Once all children are closed and the root module's
+RefCount is zero, `link.close` is sent.
 
 `SetModules` marks unwanted modules with `IntentClose`. If a module is
 re-added via `SetModules` before the close message is sent, the opposing
@@ -161,7 +169,7 @@ re-added via `SetModules` before the close message is sent, the opposing
 
 Methods available on a `*Link`:
 
-- `node.Close(peer)` — mark the link for closing and kick (deferred until no module is Busy)
+- `node.Close(peer)` — mark the link for closing and kick (deferred until all RefCounts reach zero)
 - `lk.Closing() bool` — true if the link is closing
 - `node.ConnectModules(peer, modules)` — request connection for child modules on a link (additive)
 
