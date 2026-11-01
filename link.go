@@ -56,6 +56,9 @@ type ConnectionState struct {
 	IntentConnect bool             `json:"intent_connect,omitempty"`
 	IntentClose   bool             `json:"intent_close,omitempty"`
 	RefCount      int              `json:"ref_count,omitempty"`
+	// ModuleSoID is the queue ID of the framework-managed modul-SO.
+	// Zero means no modul-SO (module doesn't implement ModuleSOHandler).
+	ModuleSoID    uint64           `json:"module_so_id,omitempty"`
 }
 
 
@@ -69,11 +72,28 @@ type LinkState struct {
 // Module processes sync methods and account API calls for a namespace.
 // Kicks are handled automatically by the framework when a module enqueues
 // a message via SendFunc — modules do not need to return kick lists.
+//
+// OnConnect is called when the module becomes bilaterally connected.
+// If the module implements ModuleSOHandler, the framework creates a
+// modul-SO and passes it; otherwise so is a zero-value SyncObject.
+//
+// OnClose is called when the module is disconnected. The framework
+// destroys the modul-SO queue (if any) after OnClose returns.
+//
+// HandleRequest returns a tristate int8:
+//
+//	1 = ack (accept the request)
+//	0 = nack (reject the request, app-level)
+//
+// An error return is a framework-level error (-1) — the counter still
+// advances but the app was not meaningfully involved.
+//
+// HandleResponse receives the peer's tristate result.
 type Module interface {
-	OnConnect(peer string)
+	OnConnect(peer string, so SyncObject)
 	OnClose(peer string)
-	HandleRequest(peer, method string, payload json.RawMessage, ts int64) (bool, error)
-	HandleResponse(peer, method string, payload json.RawMessage, ok bool, ts int64)
+	HandleRequest(peer, method string, payload json.RawMessage, ts int64) (int8, error)
+	HandleResponse(peer, method string, payload json.RawMessage, result int8, ts int64)
 	HandleAccount(method string, payload json.RawMessage) (json.RawMessage, error)
 	Status() json.RawMessage
 	ForceRemove(peer string)
@@ -109,6 +129,83 @@ type ModuleAPI struct {
 	// Reattach reconnects a deserialized SyncObject's closures.
 	// The ID and Peer fields are preserved from serialization.
 	Reattach func(so *SyncObject)
+}
+
+// newModuleSO creates a framework-managed modul-SO for the given module
+// and peer. Only send and hasPending are wired — the framework handles
+// queue cleanup after OnClose. Returns the SO for passing to OnConnect.
+func (n *Node) newModuleSO(module, peer string, cs *ConnectionState) SyncObject {
+	n.NextSyncObjectID++
+	qid := n.NextSyncObjectID
+	cs.ModuleSoID = qid
+	so := SyncObject{Peer: peer, ID: qid}
+	so.send = func(method string, payload json.RawMessage) {
+		n.outboxSend(qid, module, peer, method, payload)
+	}
+	so.hasPending = func() bool {
+		return n.outboxHas(qid)
+	}
+	return so
+}
+
+// reattachModuleSO rewires closures on a deserialized modul-SO.
+// Returns the SO for passing to OnConnect.
+func (n *Node) reattachModuleSO(module, peer string, cs *ConnectionState) SyncObject {
+	qid := cs.ModuleSoID
+	so := SyncObject{Peer: peer, ID: qid}
+	so.send = func(method string, payload json.RawMessage) {
+		n.outboxSend(qid, module, peer, method, payload)
+	}
+	so.hasPending = func() bool {
+		return n.outboxHas(qid)
+	}
+	return so
+}
+
+// fireOnConnect calls OnConnect on the module. If the module implements
+// registered with srv.ModuleSO, the framework creates a modul-SO and
+// passes it; otherwise a zero-value SyncObject is passed.
+func (n *Node) fireOnConnect(module, peer string) {
+	mod := n.moduleMap[module]
+	if mod == nil {
+		return
+	}
+	var so SyncObject
+	if n.moduleSO[module] {
+		lk := n.Links[peer]
+		if lk != nil {
+			if cs := lk.connectionState(module); cs != nil && cs.ModuleSoID == 0 {
+				so = n.newModuleSO(module, peer, cs)
+			}
+		}
+	}
+	mod.OnConnect(peer, so)
+}
+
+// fireOnClose calls OnClose on the module and cleans up the modul-SO
+// queue (if any) afterward.
+func (n *Node) fireOnClose(module, peer string) {
+	mod := n.moduleMap[module]
+	if mod == nil {
+		return
+	}
+	mod.OnClose(peer)
+	n.cleanupModuleSO(peer, module)
+}
+
+// cleanupModuleSO removes the outbox queue for a modul-SO and zeros
+// the ID. Called by the framework after OnClose.
+func (n *Node) cleanupModuleSO(peer, module string) {
+	lk := n.Links[peer]
+	if lk == nil {
+		return
+	}
+	cs := lk.connectionState(module)
+	if cs == nil || cs.ModuleSoID == 0 {
+		return
+	}
+	n.outboxDeleteQueue(cs.ModuleSoID)
+	cs.ModuleSoID = 0
 }
 
 // syncObjectRef increments the RefCount on the ConnectionState for
@@ -334,6 +431,7 @@ type Node struct {
 	Outbox      map[uint64]*SyncQueue `json:"outbox,omitempty"`
 	NextSyncObjectID uint64 `json:"next_soid,omitempty"`
 	roots      map[string][]string    `json:"-"` // root module name → child module names
+	moduleSO   map[string]bool        `json:"-"` // modules with framework-managed SO
 	moduleMap  map[string]Module      `json:"-"`
 	// send delivers a sync message to a peer and returns the response body.
 	send   func(peer string, msg txRequest) ([]byte, error) `json:"-"`
@@ -473,9 +571,10 @@ func (l *Link) ValidateTimestamp(ts, now int64) error {
 }
 
 // AcceptRequest finalizes an incoming request. Call after the handler
-// has processed the request. Returns the response to send back.
-func (l *Link) AcceptRequest(reqCounter uint64, ok bool, ts int64) *txResponse {
-	resp := txResponse{OK: ok, Timestamp: ts}
+// has processed the request. result is the tristate: -1/0/1.
+// Returns the response to send back.
+func (l *Link) AcceptRequest(reqCounter uint64, result int8, ts int64) *txResponse {
+	resp := txResponse{Result: result, Timestamp: ts}
 	l.CachedResponse = &resp
 	l.Counter++
 	l.Timestamp = ts
@@ -509,8 +608,10 @@ type txRequest struct {
 }
 
 // txResponse is the wire envelope for a transaction response.
+// Result is a tristate: -1 = framework error (counter++, app not called),
+// 0 = app nack (counter++, app called), 1 = app ack (counter++, app called).
 type txResponse struct {
-	OK        bool  `json:"ok"`
+	Result    int8  `json:"result"`
 	Timestamp int64 `json:"timestamp"`
 }
 
@@ -563,13 +664,14 @@ func olderQueuedMsg(a, b *queuedMsg) bool {
 
 // dispatchRequest dispatches an incoming sync request by namespace.
 // Link-level methods are handled inline; registered modules are
-// dispatched by name. Returns (ok, routes, error).
-func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage, ts int64) (bool, error) {
+// dispatched by name. Returns (result int8, error).
+// result: 1 = ack, 0 = nack. error → framework error (-1).
+func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage, ts int64) (int8, error) {
 	ns, method := splitMethod(fullMethod)
 	if ns == "link" {
 		l := n.Get(peer)
 		if l == nil {
-			return false, fmt.Errorf("no link to %s", peer)
+			return 0, fmt.Errorf("no link to %s", peer)
 		}
 		switch method {
 		case "connect":
@@ -577,87 +679,95 @@ func (n *Node) dispatchRequest(peer, fullMethod string, payload json.RawMessage,
 				Name string `json:"name"`
 			}
 			if err := json.Unmarshal(payload, &p); err != nil || p.Name == "" {
-				return false, fmt.Errorf("link.connect requires name")
+				return 0, fmt.Errorf("link.connect requires name")
 			}
 			if !n.isRoot(p.Name) {
-				return false, fmt.Errorf("unknown root module %q", p.Name)
+				return 0, fmt.Errorf("unknown root module %q", p.Name)
 			}
 			if l.State.Status == Connected {
-				return false, fmt.Errorf("link already connected")
+				return 0, fmt.Errorf("link already connected")
 			}
 			if l.State.Status == Incoming {
-				return false, fmt.Errorf("link already incoming")
+				return 0, fmt.Errorf("link already incoming")
 			}
 			// Root mismatch — NACK. The sender goes to waiting;
 			// force_remove is the way out.
 			if l.State.Root != p.Name {
-				return false, nil
+				return 0, nil
 			}
 			// Accept: peer was waiting (mutual add), or we're open.
 			if l.State.Status == waiting || n.InviteMode == inviteModeOpen {
 				l.State.Status = Connected
 				l.State.IntentConnect = false
-				if mod := n.moduleMap[l.State.Root]; mod != nil {
-					mod.OnConnect(peer)
-				}
-				return true, nil
+				n.fireOnConnect(l.State.Root, peer)
+				return 1, nil
 			}
 			// Invite mode — received, not yet accepted. NACK.
 			l.State.Status = Incoming
-			return false, nil
+			return 0, nil
 		case "close":
 			if n.hasActiveRefs(peer) {
-				return false, errRefsHeld
+				return 0, errRefsHeld
 			}
 			if l.State.Status == Connected {
 				for name, c := range l.State.Modules {
-					if mod := n.moduleMap[name]; mod != nil && c.Status == Connected {
-						mod.OnClose(peer)
+					if c.Status == Connected {
+						n.fireOnClose(name, peer)
 					}
 				}
-				if mod := n.moduleMap[l.State.Root]; mod != nil {
-					mod.OnClose(peer)
-				}
+				n.fireOnClose(l.State.Root, peer)
 			}
 			n.delete(peer)
-			return true, nil
+			return 1, nil
 		}
-		return false, fmt.Errorf("unknown link method %q", method)
+		return 0, fmt.Errorf("unknown link method %q", method)
 	}
 	if ns == "module" {
 		l := n.Get(peer)
 		if l == nil {
-			return false, fmt.Errorf("no link to %s", peer)
+			return 0, fmt.Errorf("no link to %s", peer)
 		}
 		switch method {
 		case "connect":
 			ok, connected, err := l.reqModule(payload, n.moduleMap, n.InviteMode, n.roots)
 			if connected != "" {
-				if mod := n.moduleMap[connected]; mod != nil {
-					mod.OnConnect(peer)
-				}
+				n.fireOnConnect(connected, peer)
 			}
-			return ok, err
+			if err != nil {
+				return 0, err
+			}
+			if ok {
+				return 1, nil
+			}
+			return 0, nil
 		case "close":
 			ok, err := l.reqModuleClose(peer, payload, n)
-			return ok, err
+			if err != nil {
+				return 0, err
+			}
+			if ok {
+				return 1, nil
+			}
+			return 0, nil
 		}
-		return false, fmt.Errorf("unknown module method %q", method)
+		return 0, fmt.Errorf("unknown module method %q", method)
 	}
 	lk := n.Get(peer)
 	if lk == nil {
-		return false, fmt.Errorf("no link to %s", peer)
+		return 0, fmt.Errorf("no link to %s", peer)
 	}
 	mod := n.moduleMap[ns]
 	if mod == nil || !lk.moduleConnected(ns) {
-		return false, fmt.Errorf("unknown method %q", fullMethod)
+		return 0, fmt.Errorf("unknown method %q", fullMethod)
 	}
 	return mod.HandleRequest(peer, method, payload, ts)
 }
 
 // dispatchResponse dispatches a sync response by namespace.
-func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage, ok bool, ts int64) {
+// result is the tristate: -1 (framework error), 0 (nack), 1 (ack).
+func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage, result int8, ts int64) {
 	ns, method := splitMethod(fullMethod)
+	ok := result > 0
 	if ns == "link" {
 		l := n.Get(peer)
 		if l == nil {
@@ -669,12 +779,10 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 				// ACK — peer accepted. Both sides connected.
 				l.State.Status = Connected
 				l.State.IntentConnect = false
-				if mod := n.moduleMap[l.State.Root]; mod != nil {
-					mod.OnConnect(peer)
-				}
+				n.fireOnConnect(l.State.Root, peer)
 			} else {
-				// NACK — go to waiting. The link stays with its
-				// counter intact; force_remove is the way out.
+				// NACK or framework error — go to waiting. The link stays
+				// with its counter intact; force_remove is the way out.
 				l.State.Status = waiting
 				l.State.IntentConnect = false
 			}
@@ -682,13 +790,11 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 			if ok {
 				if l.State.Status == Connected {
 					for name, c := range l.State.Modules {
-						if mod := n.moduleMap[name]; mod != nil && c.Status == Connected {
-							mod.OnClose(peer)
+						if c.Status == Connected {
+							n.fireOnClose(name, peer)
 						}
 					}
-					if mod := n.moduleMap[l.State.Root]; mod != nil {
-						mod.OnClose(peer)
-					}
+					n.fireOnClose(l.State.Root, peer)
 				}
 				n.delete(peer)
 			} else {
@@ -705,12 +811,10 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 		switch method {
 		case "connect":
 			if connected := l.respModule(payload, ok); connected != "" {
-				if mod := n.moduleMap[connected]; mod != nil {
-					mod.OnConnect(peer)
-				}
+				n.fireOnConnect(connected, peer)
 			}
 		case "close":
-			l.respModuleClose(peer, payload, ok, n.moduleMap)
+			l.respModuleClose(peer, payload, ok, n)
 		}
 		return
 	}
@@ -718,7 +822,7 @@ func (n *Node) dispatchResponse(peer, fullMethod string, payload json.RawMessage
 	if mod == nil {
 		return
 	}
-	mod.HandleResponse(peer, method, payload, ok, ts)
+	mod.HandleResponse(peer, method, payload, result, ts)
 }
 
 // nextTx returns the next message to send on a peer link.
@@ -916,16 +1020,14 @@ func (l *Link) reqModuleClose(peer string, payload json.RawMessage, n *Node) (bo
 	wasConnected := mod.Status == Connected
 	delete(l.State.Modules, p.Name)
 	if wasConnected {
-		if m := n.moduleMap[p.Name]; m != nil {
-			m.OnClose(peer)
-		}
+		n.fireOnClose(p.Name, peer)
 	}
 	return true, nil
 }
 
 // respModuleClose handles a module.close response. It removes the module
 // from the link and fires OnClose if the module was connected.
-func (l *Link) respModuleClose(peer string, payload json.RawMessage, ok bool, modules map[string]Module) {
+func (l *Link) respModuleClose(peer string, payload json.RawMessage, ok bool, n *Node) {
 	var p struct {
 		Name string `json:"name"`
 	}
@@ -940,9 +1042,7 @@ func (l *Link) respModuleClose(peer string, payload json.RawMessage, ok bool, mo
 		wasConnected := mod.Status == Connected
 		delete(l.State.Modules, p.Name)
 		if wasConnected {
-			if m := modules[p.Name]; m != nil {
-				m.OnClose(peer)
-			}
+			n.fireOnClose(p.Name, peer)
 		}
 		return
 	}
@@ -1029,10 +1129,12 @@ func (n *Node) handleAccount(fullMethod string, payload json.RawMessage) (json.R
 			return nil, fmt.Errorf("no link to %s", p.Peer)
 		}
 		for name := range lk.State.Modules {
+			n.cleanupModuleSO(p.Peer, name)
 			if mod := n.moduleMap[name]; mod != nil {
 				mod.ForceRemove(p.Peer)
 			}
 		}
+		n.cleanupModuleSO(p.Peer, lk.State.Root)
 		if mod := n.moduleMap[lk.State.Root]; mod != nil {
 			mod.ForceRemove(p.Peer)
 		}
@@ -1254,13 +1356,13 @@ func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
 	lk := n.Get(env.From)
 	if lk == nil {
 		if env.Method == "link.close" {
-			return &txResponse{OK: true, Timestamp: nowSecs()}, nil
+			return &txResponse{Result: 1, Timestamp: nowSecs()}, nil
 		}
 		if env.Method != "link.connect" {
 			return nil, errNoLink
 		}
 		if n.InviteMode == inviteModeClosed {
-			return &txResponse{OK: false, Timestamp: nowSecs()}, nil
+			return &txResponse{Result: 0, Timestamp: nowSecs()}, nil
 		}
 		if n.full() {
 			return nil, errMaxLinks
@@ -1288,7 +1390,7 @@ func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
 		if err := lk.ValidateTimestamp(env.Resp.Timestamp, now); err != nil {
 			return nil, err
 		}
-		n.dispatchResponse(env.From, lk.Pending.Method, lk.Pending.Payload, env.Resp.OK, env.Resp.Timestamp)
+		n.dispatchResponse(env.From, lk.Pending.Method, lk.Pending.Payload, env.Resp.Result, env.Resp.Timestamp)
 		if lk.Pending.SyncObjectID != 0 {
 			n.outboxDequeue(lk.Pending.SyncObjectID)
 		}
@@ -1297,7 +1399,8 @@ func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
 		n.kick(env.From)
 	}
 
-	// Validate counter and collision.
+	// Validate counter and collision — these are HTTP-level errors
+	// (no state change, counter does not advance).
 	if cached, err := lk.ValidateRequest(env.Counter); err != nil {
 		return nil, err
 	} else if cached != nil {
@@ -1313,17 +1416,23 @@ func (n *Node) handleIncoming(env txRequest) (*txResponse, error) {
 	}
 
 	// Validate peer timestamp (monotonicity + forward cap).
+	// Timestamp errors are framework errors: counter advances, result = -1.
 	if err := lk.ValidateTimestamp(ts, now); err != nil {
-		return nil, err
+		resp := lk.AcceptRequest(env.Counter, -1, ts)
+		n.commit()
+		n.kick(env.From)
+		return resp, nil
 	}
 
 	// Dispatch to handler.
-	ok, reqErr := n.dispatchRequest(env.From, env.Method, env.Payload, ts)
+	result, reqErr := n.dispatchRequest(env.From, env.Method, env.Payload, ts)
 	if reqErr != nil {
+		// Dispatch errors (unknown method, bad payload, etc.) are HTTP
+		// errors — counter does not advance. Only timestamp uses -1.
 		return nil, reqErr
 	}
 
-	resp := lk.AcceptRequest(env.Counter, ok, ts)
+	resp := lk.AcceptRequest(env.Counter, result, ts)
 	n.commit()
 	n.kick(env.From)
 	return resp, nil
@@ -1478,7 +1587,7 @@ func (n *Node) sendPending(peer string) {
 		return
 	}
 
-	n.dispatchResponse(peer, msg.Method, msg.Payload, resp.OK, resp.Timestamp)
+	n.dispatchResponse(peer, msg.Method, msg.Payload, resp.Result, resp.Timestamp)
 	if lk.Pending.SyncObjectID != 0 {
 		n.outboxDequeue(lk.Pending.SyncObjectID)
 	}

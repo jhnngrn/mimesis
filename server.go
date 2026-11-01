@@ -97,6 +97,7 @@ type Server struct {
 	mux       *http.ServeMux
 	factories []moduleReg
 	roots     map[string][]string // root module name → child module names
+	moduleSO  map[string]bool     // modules that get a framework-managed SO
 
 	nmu   sync.RWMutex
 	nodes map[string]*Node
@@ -127,6 +128,16 @@ func (s *Server) DeclareRoot(name string, children []string) {
 		s.roots = map[string][]string{}
 	}
 	s.roots[name] = children
+}
+
+// ModuleSO marks a module as needing a framework-managed SyncObject
+// per peer (modul-SO). The SO is created before OnConnect and destroyed
+// after OnClose. Call before Init.
+func (s *Server) ModuleSO(name string) {
+	if s.moduleSO == nil {
+		s.moduleSO = map[string]bool{}
+	}
+	s.moduleSO[name] = true
 }
 
 // Send posts a signed sync message to a peer's domain.
@@ -218,6 +229,29 @@ func (s *Server) newNode(id string, raw json.RawMessage) *Node {
 		n.registerModule(f.name, m)
 	}
 	n.roots = s.roots
+	n.moduleSO = s.moduleSO
+
+	// Reattach framework-managed modul-SOs after deserialization.
+	// The framework rewires closures and calls OnConnect so the module
+	// gets its SyncObject back.
+	for peer, lk := range n.Links {
+		// Root module modul-SO.
+		if mod := n.moduleMap[lk.State.Root]; mod != nil {
+			if cs := lk.connectionState(lk.State.Root); cs != nil && cs.ModuleSoID != 0 {
+				so := n.reattachModuleSO(lk.State.Root, peer, cs)
+				mod.OnConnect(peer, so)
+			}
+		}
+		// Child module modul-SOs.
+		for name, ms := range lk.State.Modules {
+			if ms.ModuleSoID != 0 {
+				if mod := n.moduleMap[name]; mod != nil {
+					so := n.reattachModuleSO(name, peer, ms)
+					mod.OnConnect(peer, so)
+				}
+			}
+		}
+	}
 
 	// Validate that declared root modules are registered.
 	for name := range s.roots {
@@ -382,6 +416,9 @@ func (s *Server) handleTx(w http.ResponseWriter, r *http.Request) {
 
 	resp, syncErr := n.handleIncoming(env)
 	if syncErr != nil {
+		// Only counter/transport-level errors reach here now.
+		// Timestamp and dispatch errors are handled as -1 responses
+		// (counter advances) inside handleIncoming.
 		switch {
 		case errors.Is(syncErr, errNoLink):
 			httpError(w, http.StatusNotFound, "no link")
@@ -392,9 +429,8 @@ func (s *Server) handleTx(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(syncErr, errStaleCounter), errors.Is(syncErr, errCounterAhead), errors.Is(syncErr, errCollision):
 			httpError(w, http.StatusConflict, syncErr.Error())
 		case errors.Is(syncErr, errTimestamp):
+			// Piggybacked response timestamp — still HTTP error.
 			httpError(w, http.StatusConflict, syncErr.Error())
-		case errors.Is(syncErr, ErrBadMethod):
-			httpError(w, http.StatusBadRequest, syncErr.Error())
 		default:
 			httpError(w, http.StatusBadRequest, syncErr.Error())
 		}
