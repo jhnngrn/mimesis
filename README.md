@@ -42,14 +42,14 @@ import (
 
 type myModule struct{ /* ... */ }
 
-func (m *myModule) OnConnect(peer string)   {}
+func (m *myModule) OnConnect(peer string, so mimesis.SyncObject) {}
 func (m *myModule) OnClose(peer string)     {}
 func (m *myModule) ForceRemove(peer string) {}
-func (m *myModule) HandleRequest(peer, method string, payload json.RawMessage, ts int64) (bool, error) {
-    // handle incoming sync
-    return true, nil
+func (m *myModule) HandleRequest(peer, method string, payload json.RawMessage, ts int64) (int8, error) {
+    // handle incoming sync: 1 = ack, 0 = nack
+    return 1, nil
 }
-func (m *myModule) HandleResponse(peer, method string, payload json.RawMessage, ok bool, ts int64) {
+func (m *myModule) HandleResponse(peer, method string, payload json.RawMessage, result int8, ts int64) {
 }
 func (m *myModule) HandleAccount(method string, payload json.RawMessage) (json.RawMessage, error) {
     return nil, mimesis.ErrBadMethod
@@ -83,6 +83,7 @@ go run . -domain myapp.example.com -port 3000
 - `NewServer(Config)` — create with explicit config
 - `srv.Register(name, factory)` — register a module factory
 - `srv.DeclareRoot(name, children)` — declare a module as a root module with optional child modules
+- `srv.ModuleSO(name)` — register a module for framework-managed SyncObject per peer
 - `srv.Init()` — load persisted nodes, set up HTTP routes
 - `srv.Run(ctx)` / `srv.Serve(ctx, listener)` — start serving
 - `RunAndWait(srv)` — init + serve + block until SIGINT/SIGTERM
@@ -101,10 +102,10 @@ go run . -domain myapp.example.com -port 3000
 
 ```go
 type Module interface {
-    OnConnect(peer string)
+    OnConnect(peer string, so SyncObject)
     OnClose(peer string)
-    HandleRequest(peer, method string, payload json.RawMessage, ts int64) (bool, error)
-    HandleResponse(peer, method string, payload json.RawMessage, ok bool, ts int64)
+    HandleRequest(peer, method string, payload json.RawMessage, ts int64) (int8, error)
+    HandleResponse(peer, method string, payload json.RawMessage, result int8, ts int64)
     HandleAccount(method string, payload json.RawMessage) (json.RawMessage, error)
     Status() json.RawMessage
     ForceRemove(peer string)
@@ -113,12 +114,20 @@ type Module interface {
 
 `OnConnect` is called when a module becomes bilaterally connected — on
 `link.connect` for the root module, and on `module.connect` for child
-modules. `OnClose` is called when a module is disconnected — on
-`module.close` for child modules, and on `link.close` for all connected
-modules (children first, then root), just before the link is deleted.
+modules. Modules registered with `srv.ModuleSO(name)` receive a
+framework-managed SyncObject; others receive a zero-value `SyncObject{}`
+(ID 0, nil closures — safe to ignore). `OnClose` is called when a module
+is disconnected — on `module.close` for child modules, and on `link.close`
+for all connected modules (children first, then root), just before the link
+is deleted. The framework destroys the modul-SO queue after OnClose returns.
 Only modules that received `OnConnect` will receive `OnClose`. Modules
 use these to create and clean up per-peer state. Modules that don't need
 lifecycle hooks provide empty implementations.
+
+`HandleRequest` returns a tristate `int8`: `1` = ack (accept), `0` = nack
+(reject, app-level). An error return is a framework-level error — the
+counter still advances but the result is `-1`. `HandleResponse` receives
+the peer's tristate result.
 
 Modules create per-peer sync channels via `ModuleAPI.NewSyncObject(peer)`,
 which returns a `SyncObject` with `Send`, `HasPending`, and `Close`
