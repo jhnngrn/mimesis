@@ -49,7 +49,7 @@ func (m *myModule) HandleRequest(peer, method string, payload json.RawMessage, t
     // handle incoming sync: 1 = ack, 0 = nack
     return 1, nil
 }
-func (m *myModule) HandleResponse(peer, method string, payload json.RawMessage, result int8, ts int64) {
+func (m *myModule) HandleResponse(peer, method string, payload json.RawMessage, result int8) {
 }
 func (m *myModule) HandleAccount(method string, payload json.RawMessage) (json.RawMessage, error) {
     return nil, mimesis.ErrBadMethod
@@ -105,7 +105,7 @@ type Module interface {
     OnConnect(peer string, so SyncObject)
     OnClose(peer string)
     HandleRequest(peer, method string, payload json.RawMessage, ts int64) (int8, error)
-    HandleResponse(peer, method string, payload json.RawMessage, result int8, ts int64)
+    HandleResponse(peer, method string, payload json.RawMessage, result int8)
     HandleAccount(method string, payload json.RawMessage) (json.RawMessage, error)
     Status() json.RawMessage
     ForceRemove(peer string)
